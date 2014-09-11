@@ -19,6 +19,11 @@
 static int die_stack_indent_level = 0;
 
 
+// FIXME: THIS IS A TEMPORARY STORAGE TO SHOW HOW
+// PC ADDR - SRC LINE ASSOCIACION WORKS
+static std::map<Dwarf_Addr, Dwarf_Unsigned> s_pcaddr2line;
+
+
 static void print_attribute(Dwarf_Debug dbg, Dwarf_Die die,
 	Dwarf_Half attr, Dwarf_Attribute attr_in, int die_indent_level,
 	char **srcfiles, Dwarf_Signed cnt) {
@@ -39,7 +44,7 @@ static void print_attribute(Dwarf_Debug dbg, Dwarf_Die die,
 		SEQ("DW_AT_decl_file") || SEQ("DW_AT_decl_line") ||
 		SEQ("DW_AT_type") || SEQ("DW_AT_low_pc") || SEQ("DW_AT_high_pc")) {
 
-		printf("%*s%s : ", die_indent_level, " ", v);
+		printf("%*s%s: ", die_indent_level, " ", v);
 		to_print = true;
 	}
 	
@@ -64,8 +69,7 @@ static void print_attribute(Dwarf_Debug dbg, Dwarf_Die die,
 		if (SEQ("DW_AT_decl_file")) {
 			printf("\"%s\" ", srcfiles[val - 1]);
 		}
-		else if (SEQ("DW_AT_decl_line") || SEQ("DW_AT_low_pc") ||
-			SEQ("DW_AT_high_pc")) {
+		else if (SEQ("DW_AT_decl_line")) {
 			printf("\"%lli\" ", val);
 		}
 	}
@@ -75,7 +79,8 @@ static void print_attribute(Dwarf_Debug dbg, Dwarf_Die die,
 		if (DW_DLV_OK != sres) {
 			printf("failed to read address attribute\n");
 		}
-		printf("0x%08llx ", addr);
+		//printf("0x%08llx ", addr);
+		printf("line:%llu \"0x%08llx\" ", s_pcaddr2line[addr], addr);
 	}
 	else if (SEQ("DW_AT_type")) {
 		Dwarf_Off offset = 0;
@@ -112,7 +117,8 @@ static bool print_one_die(Dwarf_Debug dbg, Dwarf_Die die,
 		return false;
 	}
 
-	printf("\n%*s%s ", die_indent_level, " ", tagname);
+	printf("\n%*s[%d]%s ", 2 * die_indent_level, " ",
+		die_indent_level, tagname);
 
 	// REF: print_die.c : 1028
 
@@ -144,7 +150,7 @@ static bool print_one_die(Dwarf_Debug dbg, Dwarf_Die die,
 			printf("<Cannot get attributes>\n");
 			continue;
 		}
-		printf("%*s", die_indent_level + 1, " ");
+		printf("\r%*s", 2 * die_indent_level + 1, " ");
 		print_attribute(dbg, die, attr, atlist[i], die_indent_level,
 			srcfiles, cnt);
 	}
@@ -204,6 +210,73 @@ static void print_die_and_children(Dwarf_Debug dbg,
 }
 
 
+static void print_line_numbers_info(Dwarf_Debug dbg,
+	Dwarf_Die cu_die) {
+
+	Dwarf_Error_s *err;
+	Dwarf_Line *linebuf = NULL;
+	Dwarf_Signed linecount = 0;
+
+	int lres = dwarf_srclines(cu_die, &linebuf,
+		&linecount, &err);
+	switch(lres) {
+	case DW_DLV_ERROR:
+		printf("Error in reading line numbers information\n");
+		return;
+	case DW_DLV_NO_ENTRY:
+		printf("No line numbers information\n");
+		return;
+	default:;
+	}
+
+	int ares = 0, sres = 0;
+	Dwarf_Unsigned old_lineno = 0;
+	printf("\n\n**PC-ADDRESSES ASSOCIATION\n");
+	Dwarf_Addr pc = 0;
+	Dwarf_Unsigned lineno = 0;
+	char * filename = 0;
+	for (Dwarf_Signed i = 0; i < linecount; ++i) {
+		Dwarf_Line line = linebuf[i];
+		filename = (char *)"<unknown>";
+		sres = dwarf_linesrc(line, &filename, &err);
+		if (DW_DLV_ERROR == sres) {
+			printf("cannot read a source file that corresponds " 
+				"to the line\n");
+		} else {
+			ares = dwarf_lineaddr(line, &pc, &err);
+		}
+		if (DW_DLV_ERROR == ares) {
+			printf("failed to obtain source - pc association\n");
+			continue;
+		}
+		ares = dwarf_lineno(line, &lineno, &err);
+
+		// This is a dirty huck! It seems that .debug_info
+		// actually contains incoorect high_pc for nested
+		// lexical scopes (dwarfdump -l <bin> does the same
+		// mistake).
+
+		if (lineno < old_lineno)
+			lineno = old_lineno + 1;
+		old_lineno = lineno;
+		if (DW_DLV_ERROR == ares) {
+			printf("failed to get a line number for the pc addr\n");
+			continue;
+		}
+		if (DW_DLV_NO_ENTRY == ares)
+			continue;
+		printf("\t0x%08llx %llu %s\n", pc, lineno, filename);
+		// FIXME
+		s_pcaddr2line[pc] = lineno;
+
+		if (DW_DLV_OK == sres)
+			dwarf_dealloc(dbg, filename, DW_DLA_STRING);
+	}
+	dwarf_srclines_dealloc(dbg, linebuf, linecount);
+} 
+
+
+
 static int print_info(Dwarf_Debug &dbg, int is_info) {
 
 	Dwarf_Error_s *err;
@@ -252,6 +325,10 @@ static int print_info(Dwarf_Debug &dbg, int is_info) {
 			srcfiles = 0;
 			cnt = 0;
 		}
+		
+		// FIXME
+		s_pcaddr2line.clear();
+		print_line_numbers_info(dbg, cu_die);
 		print_die_and_children(dbg, cu_die, is_info, srcfiles, cnt);
 		if (DW_DLV_OK == srcf) {
 			for (int si = 0; si < cnt; ++si)
