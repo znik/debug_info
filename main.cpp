@@ -37,7 +37,7 @@ static void print_attribute(Dwarf_Debug dbg, Dwarf_Die die,
 	bool to_print = false;	
 	if (SEQ("DW_AT_name") || SEQ("DW_AT_MIPS_linkage_name") ||
 		SEQ("DW_AT_decl_file") || SEQ("DW_AT_decl_line") ||
-		SEQ("DW_AT_type")) {
+		SEQ("DW_AT_type") || SEQ("DW_AT_low_pc") || SEQ("DW_AT_high_pc")) {
 
 		printf("%*s%s : ", die_indent_level, " ", v);
 		to_print = true;
@@ -64,9 +64,18 @@ static void print_attribute(Dwarf_Debug dbg, Dwarf_Die die,
 		if (SEQ("DW_AT_decl_file")) {
 			printf("\"%s\" ", srcfiles[val - 1]);
 		}
-		else if (SEQ("DW_AT_decl_line")) {
+		else if (SEQ("DW_AT_decl_line") || SEQ("DW_AT_low_pc") ||
+			SEQ("DW_AT_high_pc")) {
 			printf("\"%lli\" ", val);
 		}
+	}
+	else if (SEQ("DW_AT_low_pc") || SEQ("DW_AT_high_pc")) {
+		Dwarf_Addr addr = 0;
+		sres = dwarf_formaddr(attr_in, &addr, &err);
+		if (DW_DLV_OK != sres) {
+			printf("failed to read address attribute\n");
+		}
+		printf("0x%08llx ", addr);
 	}
 	else if (SEQ("DW_AT_type")) {
 		Dwarf_Off offset = 0;
