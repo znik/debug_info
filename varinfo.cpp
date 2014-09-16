@@ -1,25 +1,26 @@
 ///
-#ifdef _LINUX_
+#ifdef __linux
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#endif // _LINUX_
+#endif // __linux
 
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _LINUX_
+#ifdef __linux
 #include <fcntl.h>
 #include <libelf.h>
 #include <libdwarf.h>
 #include <gelf.h>
-#endif // _LINUX_
+#endif // __linux
 
 #include <cstdio>
 #include <memory>
 #include <vector>
 #include <string>
 #include <cassert>
+#include <algorithm>
 #include <map>
 
 #include "varinfo.hpp"
@@ -36,23 +37,23 @@ namespace {
 
 	// Variables describe every variable declared in a program
 	struct Variable {
-		Variable(SrcFiles_t& srcfiles, BaseTypes_t& basetypes) :
+		Variable(SrcFiles_t *const srcfiles, BaseTypes_t *const basetypes) :
 			_srcfiles(srcfiles), _basetypes(basetypes),
 			_line(-1), _vis_ended_line(-1),
 			_file_id(-1), _type_offset(-1) {};
 
 		void setLine(size_t line) { _line = line; }
 		void setFile(const std::string& file) {
-			auto it = _srcfiles.end();
-			for (it = _srcfiles.begin(); _srcfiles.end() != it; ++it) {
+			auto it = _srcfiles->end();
+			for (it = _srcfiles->begin(); _srcfiles->end() != it; ++it) {
 				if (file == it->second) {
 					_file_id = it->first;
 					break;
 				}
 			}
-			if (_srcfiles.end() == it) {
-				_srcfiles[_srcfiles.size()] = file;
-				_file_id = _srcfiles.size() - 1;
+			if (_srcfiles->end() == it) {
+				(*_srcfiles)[_srcfiles->size()] = file;
+				_file_id = _srcfiles->size() - 1;
 			}
 		}
 		void setVisEndLine(size_t vis_end_line) { _vis_ended_line = vis_end_line; };
@@ -62,14 +63,14 @@ namespace {
 		size_t line() const { return _line; }
 		size_t visEndsLine() const { return _vis_ended_line; }
 		const std::string& file() {
-			return _srcfiles[_file_id];
+			return (*_srcfiles)[_file_id];
 		}
 		const std::string& name() const { return _name; }
-		const std::string& type() const { return _basetypes[_type_offset]; }
+		const std::string type() const { return (*_basetypes)[_type_offset]; }
 
 	private:
-		SrcFiles_t&		_srcfiles;
-		BaseTypes_t&	_basetypes;
+		SrcFiles_t*		_srcfiles;
+		BaseTypes_t*	_basetypes;
 
 		size_t		_line;			// declaration line
 		size_t		_vis_ended_line;// line where local visibility of the var ends
@@ -84,19 +85,32 @@ namespace {
 
 class VarInfo::Imp {
 public:
-	bool init();
-	const std::string& type(const std::string& file, const size_t line, const std::string& name) const {
-		for (Variable v : _vars) {
-			if (v.line() <= line && line <= v.visEndsLine() && name == v.name() && file == v.file())
-				return v.type();
+	bool init(const std::string&);
+	const std::string type(const std::string& file, const size_t line,
+		const std::string& name) const {
+		
+		std::map<size_t, Variable*> variants;
+		for (unsigned i = 0; i < _vars.size(); ++i) {
+			Variable *const v = const_cast<Variable *const>(&_vars[i]);
+			if (v->line() <= line && line <= v->visEndsLine() &&
+				 name == v->name() && file == v->file()) {
+				
+				variants[v->line()] = v;
+			}
 		}
+#ifndef __linux
 #pragma warning(suppress : 4172)
+#endif
+		// FIXME last element is required !!!
+		if (0 != variants.size())
+			return std::max_element(variants.begin(), variants.end())
+				->second->type();
 		return "<Unknown>";
 	}
 
 private:
 	Variable& newVar() {
-		_vars.push_back(Variable(_src_files, _base_types));
+		_vars.push_back(Variable(&_src_files, &_base_types));
 		return _vars[_vars.size() - 1];
 	}
 
@@ -109,13 +123,14 @@ private:
 	SrcFiles_t	_src_files;
 	BaseTypes_t	_base_types;
 
-#ifdef _LINUX_
+#ifdef __linux
 private:
-	int __die_stack_indent_level;
-
 	typedef std::map<Dwarf_Addr, Dwarf_Unsigned> addr2line_mapper_t;
 	std::map<std::string, addr2line_mapper_t> _pcaddr2line;
 
+	int _die_stack_indent_level;
+	int _vis_end_line;
+	
 	void print_attribute(Dwarf_Debug dbg, Dwarf_Die die,
 		Dwarf_Half attr, Dwarf_Attribute attr_in, int die_indent_level,
 		char **srcfiles, const char *cfile, Dwarf_Signed cnt, Variable *const var = 0,
@@ -142,15 +157,22 @@ private:
 	}
 	
 	int sres = 0;
-	if (SEQ("DW_AT_name") || SEQ("DW_AT_MIPS_linkage_name")) {
+	if (SEQ("DW_AT_name")) {
 		char *name = 0;
 		sres = dwarf_formstring(attr_in, &name, &err);
 		if (DW_DLV_OK != sres) {
 			printf("failed to read string attribute\n");
 			return;
 		}
-
 		printf("\"%s\" ", name);
+		if (!!var) {
+			var->setName(name);	
+			var->setVisEndLine(_vis_end_line);
+		} else {
+			 if (!!basetype)
+				*basetype = name;
+		}
+
 	} else if (SEQ("DW_AT_decl_file") || SEQ("DW_AT_decl_line")) {
 		Dwarf_Signed val = 0;
 		Dwarf_Unsigned uval = 0;
@@ -164,19 +186,27 @@ private:
 			}
 			if (SEQ("DW_AT_decl_file")) {
 				cfile = srcfiles[val - 1];
+				if (!!var)
+					var->setFile(cfile);
 				printf("\"%s\" ", cfile);
 			}
 			else if (SEQ("DW_AT_decl_line")) {
 				printf("\"%lli\" ", val);
+				if (!!var)
+					var->setLine(val);
 			}
 		}
 		
 		if (SEQ("DW_AT_decl_file")) {
-			cfile = srcfiles[val - 1];
+			cfile = srcfiles[uval - 1];
+			if (!!var)
+				var->setFile(cfile);
 			printf("\"%s\" ", cfile);
 		}
 		else if (SEQ("DW_AT_decl_line")) {
 			printf("\"%lli\" ", uval);
+			if (!!var)
+				var->setLine(uval);
 		}
 	}
 	else if (SEQ("DW_AT_low_pc") || SEQ("DW_AT_high_pc")) {
@@ -185,13 +215,12 @@ private:
 		if (DW_DLV_OK != sres) {
 			printf("failed to read address attribute\n");
 		}
-		if (!!var)
-			var->setVisEndLine(_pcaddr2line[cfile][addr]);
-		printf("line:%llu \"0x%08llx\" ", _pcaddr2line[cfile][addr], addr);
+		_vis_end_line = _pcaddr2line[cfile][addr];
+		printf("line:%llu \"0x%08llx\" ", _vis_end_line, addr);
 	}
 	else if (SEQ("DW_AT_type")) {
 		Dwarf_Off offset = 0;
-		sres = dwarf_formref(attr_in, &offset, &err)
+		sres = dwarf_formref(attr_in, &offset, &err);
 		if (DW_DLV_OK != sres) {
 				printf("failed to read ref attribute\n");
 				return;
@@ -229,20 +258,20 @@ private:
 		Variable *var = 0;
 		std::string *basetype = 0;
 
-		if (0 == strcmp(tagname, "DW_TAG_variable")) {
-			var = &newVar();
-		} else if (0 == strcmp(tagname, "DW_TAG_base_type")) {
-			var = &newBaseType();
-		}
-
-		// REF: print_die.c : 1028
-
 		Dwarf_Off offset = 0;	
 		res = dwarf_die_CU_offset(die, &offset, &err);
 		if (DW_DLV_OK != res) {
 			printf("Failed to get die CU offset\n");
 			return false;
 		}
+
+		if (0 == strcmp(tagname, "DW_TAG_variable")) {
+			var = &newVar();
+		} else if (0 == strcmp(tagname, "DW_TAG_base_type")) {
+			basetype = &newBaseType(offset);
+		}
+
+		// REF: print_die.c : 1028
 
 		printf("<0x%08llu>", offset);
 		printf("\r\n");
@@ -511,25 +540,27 @@ private:
 		close(fd);
 		return 1 == e;
 	}
-#endif // _LINUX_
+#endif // __linux
 };
 
 
-bool VarInfo::Imp::init() {
-#ifdef _LINUX_
+bool VarInfo::Imp::init(const std::string& file) {
+#ifdef __linux
 	_die_stack_indent_level = 0;
-	return read_file_debug(_file.c_str());
-#else // _LINUX_
+	return read_file_debug(file.c_str());
+#else // __linux
 	return false; // NOT_IMPLEMENTED
-#endif // _LINUX_
+#endif // __linux
 };
 
 
-const std::string& VarInfo::type(const std::string& file, const size_t line, const std::string& name) const {
+VarInfo::VarInfo() : _imp(new VarInfo::Imp) {}
+
+const std::string VarInfo::type(const std::string& file, const size_t line, const std::string& name) const {
 	return _imp->type(file, line, name);
 }
 
 bool VarInfo::init(const std::string& file) {
 	_file = file;
-	return _imp->init();
+	return _imp->init(_file);
 }
