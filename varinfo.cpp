@@ -56,9 +56,13 @@ namespace {
 				_file_id = _srcfiles->size() - 1;
 			}
 		}
-		void setVisEndLine(size_t vis_end_line) { _vis_ended_line = vis_end_line; };
+		void setVisEndLine(size_t vis_end_line) {
+			_vis_ended_line = vis_end_line;
+		};
 		void setName(const std::string& name) { _name = name; }
-		void setTypeOffset(size_t type_offset) { _type_offset = type_offset; }
+		void setTypeOffset(size_t type_offset) {
+			 _type_offset = type_offset;
+		}
 
 		size_t line() const { return _line; }
 		size_t visEndsLine() const { return _vis_ended_line; }
@@ -66,7 +70,9 @@ namespace {
 			return (*_srcfiles)[_file_id];
 		}
 		const std::string& name() const { return _name; }
-		const std::string type() const { return (*_basetypes)[_type_offset]; }
+		const std::string type() const {
+			return (*_basetypes)[_type_offset];
+		}
 
 	private:
 		SrcFiles_t*		_srcfiles;
@@ -86,7 +92,8 @@ namespace {
 class VarInfo::Imp {
 public:
 	bool init(const std::string&);
-	const std::string type(const std::string& file, const size_t line,
+	const std::string type(const std::string& file,
+		const size_t line,
 		const std::string& name) const {
 		
 		std::map<size_t, Variable*> variants;
@@ -127,14 +134,17 @@ private:
 private:
 	typedef std::map<Dwarf_Addr, Dwarf_Unsigned> addr2line_mapper_t;
 	std::map<std::string, addr2line_mapper_t> _pcaddr2line;
+	#define STUB std::string("STUB")
+	
+	std::string _file;
 
 	int _die_stack_indent_level;
 	int _vis_end_line;
 	
 	void print_attribute(Dwarf_Debug dbg, Dwarf_Die die,
 		Dwarf_Half attr, Dwarf_Attribute attr_in, int die_indent_level,
-		char **srcfiles, const char *cfile, Dwarf_Signed cnt, Variable *const var = 0,
-		std::string *const basetype = 0) {
+		char **srcfiles, const char * *const cfile, Dwarf_Signed cnt,
+		Variable *const var = 0, std::string *const basetype = 0) {
 
 		const char *v = 0;
 		Dwarf_Error_s *err;
@@ -147,81 +157,103 @@ private:
 
 		#define SEQ(s) (0== strcmp(v, s))
 
-		bool to_print = false;	
+		bool to_print = false;
 		if (SEQ("DW_AT_name") || SEQ("DW_AT_MIPS_linkage_name") ||
 			SEQ("DW_AT_decl_file") || SEQ("DW_AT_decl_line") ||
-			SEQ("DW_AT_type") || SEQ("DW_AT_low_pc") || SEQ("DW_AT_high_pc")) {
+			SEQ("DW_AT_type") || SEQ("DW_AT_low_pc") ||
+			SEQ("DW_AT_high_pc") || SEQ("DW_AT_comp_dir")) {
 
-		printf("%*s%s : ", 2 * die_indent_level, " ", v);
-		to_print = true;
-	}
+			to_print = true;
+		}
 	
-	int sres = 0;
-	if (SEQ("DW_AT_name")) {
-		char *name = 0;
-		sres = dwarf_formstring(attr_in, &name, &err);
-		if (DW_DLV_OK != sres) {
-			printf("failed to read string attribute\n");
-			return;
-		}
-		printf("\"%s\" ", name);
-		if (!!var) {
-			var->setName(name);	
-			var->setVisEndLine(_vis_end_line);
-		} else {
-			 if (!!basetype)
-				*basetype = name;
-		}
-
-	} else if (SEQ("DW_AT_decl_file") || SEQ("DW_AT_decl_line")) {
-		Dwarf_Signed val = 0;
-		Dwarf_Unsigned uval = 0;
-		sres = dwarf_formudata(attr_in, &uval, &err);
-
-		if (DW_DLV_OK != sres) {
-			sres = dwarf_formsdata(attr_in, &val, &err);
+		printf("%*s%s : ", 2 * die_indent_level, " ", v);
+		
+		int sres = 0;
+		if (SEQ("DW_AT_comp_dir")) {
+			char *name = 0;
+			sres = dwarf_formstring(attr_in, &name, &err);
 			if (DW_DLV_OK != sres) {
-				printf("failed to read data attribute\n");
+				printf("failed to read string attribute\n");
 				return;
 			}
+			_file = std::string() + name + '/' + _file;
+			*cfile = _file.c_str();	
+			printf("\"%s\" ", name);
+		}
+
+		if (SEQ("DW_AT_name")) {
+			char *name = 0;
+			sres = dwarf_formstring(attr_in, &name, &err);
+			if (DW_DLV_OK != sres) {
+				printf("failed to read string attribute\n");
+				return;
+			}
+			// For each compile unit (i.e. for each .o file)
+			if (0 == die_indent_level)
+				_file = name;
+			printf("\"%s\" ", name);
+			if (!!var) {
+				var->setName(name);	
+				var->setVisEndLine(_vis_end_line);
+			} else {
+				if (!!basetype)
+					*basetype = name;
+			}
+		} else if (SEQ("DW_AT_decl_file") || SEQ("DW_AT_decl_line")) {
+			// FIXME REFACTOR	
+			Dwarf_Signed val = 0;
+			Dwarf_Unsigned uval = 0;
+			sres = dwarf_formudata(attr_in, &uval, &err);
+
+			if (DW_DLV_OK != sres) {
+				sres = dwarf_formsdata(attr_in, &val, &err);
+				if (DW_DLV_OK != sres) {
+					printf("failed to read data attribute\n");
+					return;
+				}
+				if (SEQ("DW_AT_decl_file")) {
+					*cfile = srcfiles[val - 1];
+					// FIXME CHANGE TO FULL PATH!!!
+					if (!!var)
+						var->setFile(*cfile);
+					printf("\"%s\" ", *cfile);
+				}
+				else if (SEQ("DW_AT_decl_line")) {
+					printf("\"%lli\" ", val);
+					if (!!var)
+						var->setLine(val);
+				}
+			}
+		
 			if (SEQ("DW_AT_decl_file")) {
-				cfile = srcfiles[val - 1];
+				*cfile = srcfiles[uval - 1];
+				// FIXME CHANGE TO FULL PATH
 				if (!!var)
-					var->setFile(cfile);
-				printf("\"%s\" ", cfile);
+					var->setFile(*cfile);
+				printf("\"%s\" ", *cfile);
 			}
 			else if (SEQ("DW_AT_decl_line")) {
-				printf("\"%lli\" ", val);
+				printf("\"%lli\" ", uval);
 				if (!!var)
-					var->setLine(val);
+					var->setLine(uval);
 			}
 		}
-		
-		if (SEQ("DW_AT_decl_file")) {
-			cfile = srcfiles[uval - 1];
-			if (!!var)
-				var->setFile(cfile);
-			printf("\"%s\" ", cfile);
+		else if (SEQ("DW_AT_low_pc") || SEQ("DW_AT_high_pc")) {
+			Dwarf_Addr addr = 0;
+			sres = dwarf_formaddr(attr_in, &addr, &err);
+			if (DW_DLV_OK != sres) {
+				printf("failed to read address attribute\n");
+			}
+
+			std::string full_path = *cfile; //_file;
+			printf("full_path=%s\n", full_path.c_str());
+			_vis_end_line = _pcaddr2line[STUB/*full_path*/][addr];
+			printf("line:%d \"0x%08llx\" ", _vis_end_line, addr);
 		}
-		else if (SEQ("DW_AT_decl_line")) {
-			printf("\"%lli\" ", uval);
-			if (!!var)
-				var->setLine(uval);
-		}
-	}
-	else if (SEQ("DW_AT_low_pc") || SEQ("DW_AT_high_pc")) {
-		Dwarf_Addr addr = 0;
-		sres = dwarf_formaddr(attr_in, &addr, &err);
-		if (DW_DLV_OK != sres) {
-			printf("failed to read address attribute\n");
-		}
-		_vis_end_line = _pcaddr2line[cfile][addr];
-		printf("line:%llu \"0x%08llx\" ", _vis_end_line, addr);
-	}
-	else if (SEQ("DW_AT_type")) {
-		Dwarf_Off offset = 0;
-		sres = dwarf_formref(attr_in, &offset, &err);
-		if (DW_DLV_OK != sres) {
+		else if (SEQ("DW_AT_type")) {
+			Dwarf_Off offset = 0;
+			sres = dwarf_formref(attr_in, &offset, &err);
+			if (DW_DLV_OK != sres) {
 				printf("failed to read ref attribute\n");
 				return;
 			}
@@ -230,12 +262,15 @@ private:
 			printf("<0x%08llu> ", offset);
 		}
 
-		if (to_print)
-			printf("\n");
+		if (to_print){
+
+		}
+		printf("\n");
 	}
 
 	bool print_one_die(Dwarf_Debug dbg, Dwarf_Die die,
-		int die_indent_level, char **srcfiles, Dwarf_Signed cnt) {
+		int die_indent_level, char **srcfiles, const char* *const cfile,
+		Dwarf_Signed cnt) {
 
 		Dwarf_Error_s *err;
 		Dwarf_Half tag = 0;
@@ -252,6 +287,19 @@ private:
 			printf("Failed to get the name of the tag\n");
 			return false;
 		}
+
+		#define SEQ1(s)	(0 == strcmp(s, tagname))
+		if (
+			!SEQ1("DW_TAG_compile_unit")
+			&& !SEQ1("DW_TAG_base_type")
+//			&& !SEQ1("DW_TAG_typedef")
+			&& !SEQ1("DW_TAG_formal_parameter")
+			&& !SEQ1("DW_TAG_lexical_block")
+			&& !SEQ1("DW_TAG_variable")
+			&& !SEQ1("DW_TAG_subprogram")
+			)
+
+			return false;
 
 		printf("\n%*s[%d]%s ", 2 * die_indent_level, " ", die_indent_level, tagname);
 
@@ -295,7 +343,7 @@ private:
 			}
 			printf("%*s", 2 * die_indent_level + 1, " ");
 			print_attribute(dbg, die, attr, atlist[i], die_indent_level,
-				srcfiles, srcfiles[0], cnt, var, basetype);
+				srcfiles, cfile, cnt, var, basetype);
 		}
 
 		for (Dwarf_Signed i = 0; i < atcnt; ++i) {
@@ -308,7 +356,7 @@ private:
 
 	void print_die_and_children(Dwarf_Debug dbg,
 		Dwarf_Die in_die_in, Dwarf_Bool is_info, char **srcfiles,
-		Dwarf_Signed cnt) {
+		const char * *const cfile, Dwarf_Signed cnt) {
 
 		// REF print_die.c : 640	
 		Dwarf_Die in_die = in_die_in;
@@ -319,19 +367,23 @@ private:
 		int cdres = 0;
 
 		for (;;) {
-			print_one_die(dbg, in_die, _die_stack_indent_level, srcfiles, cnt);
-		
-			cdres = dwarf_child(in_die, &child, &err);
-			if (DW_DLV_OK == cdres) {
-				++_die_stack_indent_level;
-				print_die_and_children(dbg, child, is_info, srcfiles, cnt);
-				--_die_stack_indent_level;
-				dwarf_dealloc(dbg, child, DW_DLA_DIE);
-				child = 0;
-			}
-			else if (DW_DLV_ERROR == cdres) {
-				printf("Error while obtaining a child\n");
-				return;
+			if (print_one_die(dbg, in_die, _die_stack_indent_level,
+				srcfiles, cfile, cnt)) {
+				
+				cdres = dwarf_child(in_die, &child, &err);
+	
+				if (DW_DLV_OK == cdres) {
+					++_die_stack_indent_level;
+					print_die_and_children(dbg, child, is_info,
+						srcfiles, cfile, cnt);
+					--_die_stack_indent_level;
+					dwarf_dealloc(dbg, child, DW_DLA_DIE);
+					child = 0;
+				}
+				else if (DW_DLV_ERROR == cdres) {
+					printf("Error while obtaining a child\n");
+					return;
+				}
 			}
 		
 			cdres = dwarf_siblingof_b(dbg, in_die, is_info, &sibling, &err);
@@ -372,7 +424,7 @@ private:
 
 		int ares = 0, sres = 0;
 		Dwarf_Unsigned old_lineno = 0;
-		printf("\n\n**PC-ADDRESSES ASSOCIATION\n");
+		//printf("\n\n**PC-ADDRESSES ASSOCIATION\n");
 		Dwarf_Addr pc = 0;
 		Dwarf_Unsigned lineno = 0;
 		char * filename = 0;
@@ -391,15 +443,15 @@ private:
 				continue;
 			}
 			ares = dwarf_lineno(line, &lineno, &err);
-
+			
 			// This is a dirty huck! It seems that .debug_info
 			// actually contains incoorect high_pc for nested
 			// lexical scopes (dwarfdump -l <bin> does the same
 			// mistake).
 
-			if (lineno < old_lineno)
-				lineno = old_lineno + 1;
-			old_lineno = lineno;
+			//if (lineno < old_lineno)
+			//	lineno = old_lineno + 1;
+			//old_lineno = lineno;
 
 			if (DW_DLV_ERROR == ares) {
 				printf("failed to get a line number for the pc addr\n");
@@ -408,8 +460,8 @@ private:
 			if (DW_DLV_NO_ENTRY == ares)
 				continue;
 			
-			printf("\t0x%08llx %llu %s\n", pc, lineno, filename);
-			_pcaddr2line[filename][pc] = lineno;
+			//printf("\t0x%08llx %llu %s\n", pc, lineno, filename);
+			_pcaddr2line[STUB/*filename*/][pc] = lineno;
 
 			if (DW_DLV_OK == sres)
 				dwarf_dealloc(dbg, filename, DW_DLA_STRING);
@@ -417,7 +469,7 @@ private:
 		dwarf_srclines_dealloc(dbg, linebuf, linecount);
 	} 
 
-	int print_info(Dwarf_Debug &dbg, int is_info) {
+	int print_info(Dwarf_Debug &dbg, bool src_lines_nfo) {
 
 		Dwarf_Error_s *err;
 		Dwarf_Unsigned cu_header_length = 0;
@@ -430,10 +482,7 @@ private:
 		Dwarf_Unsigned typeoffset = 0;
 		Dwarf_Unsigned next_cu_offset = 0;
 
-		if (is_info)
-			printf("[[Section .debug_info]]\n");
-		else
-			printf("[[Section .debug_types]]\n");
+		printf("[[Section .debug_info]]\n");
 
 		unsigned iteration = 0;
 		int nres = 0;
@@ -442,37 +491,42 @@ private:
 
 		// REF print_die.c : 400	
 		for (;;++iteration) {
-			printf("*\n");
+//			printf("*\n");
 
-			nres = dwarf_next_cu_header_c(dbg, is_info, &cu_header_length,
-				&version_stamp, &abbrev_offset, &address_size, &length_size,
-				&extension_size, &signature, &typeoffset, &next_cu_offset,
-				&err);
+			nres = dwarf_next_cu_header_c(dbg, 1, &cu_header_length,
+				&version_stamp, &abbrev_offset, &address_size,
+				&length_size, &extension_size, &signature,
+				&typeoffset, &next_cu_offset, &err);
 
 			if (DW_DLV_NO_ENTRY == nres || DW_DLV_OK != nres)
 				return nres;
 
-			sres = dwarf_siblingof_b(dbg, NULL, is_info, &cu_die, &err);
+			sres = dwarf_siblingof_b(dbg, NULL, 1, &cu_die, &err);
 			if (DW_DLV_OK != sres) {
 				printf("error in reading siblings");
 				return sres;
 			}
-		
-			Dwarf_Signed cnt = 0;
-			char **srcfiles = 0;
-			int srcf = dwarf_srcfiles(cu_die, &srcfiles, &cnt, &err);
-			if (DW_DLV_OK != srcf) {
-				srcfiles = 0;
-				cnt = 0;
-			}
+	
+			if (src_lines_nfo) {
+				print_line_numbers_info(dbg, cu_die);
+			} else {
+				Dwarf_Signed cnt = 0;
+				char **srcfiles = 0;
+				int srcf = dwarf_srcfiles(cu_die, &srcfiles, &cnt,
+					&err);
+				if (DW_DLV_OK != srcf) {
+					srcfiles = 0;
+					cnt = 0;
+				}
 
-			_pcaddr2line.clear();
-			print_line_numbers_info(dbg, cu_die);
-			print_die_and_children(dbg, cu_die, is_info, srcfiles, cnt);
-			if (DW_DLV_OK == srcf) {
-				for (int si = 0; si < cnt; ++si)
-					dwarf_dealloc(dbg, srcfiles[si], DW_DLA_STRING);
-				dwarf_dealloc(dbg, srcfiles, DW_DLA_LIST);
+				const char * filename = 0;
+				print_die_and_children(dbg, cu_die, 1, srcfiles,
+					&filename, cnt);
+				if (DW_DLV_OK == srcf) {
+					for (int si = 0; si < cnt; ++si)
+						dwarf_dealloc(dbg, srcfiles[si], DW_DLA_STRING);
+					dwarf_dealloc(dbg, srcfiles, DW_DLA_LIST);
+				}
 			}
 			dwarf_dealloc(dbg, cu_die, DW_DLA_DIE);
 			cu_die = 0;
@@ -492,8 +546,8 @@ private:
 			return 0;
 		}
 	
-		print_info(dbg, 0);
-		print_info(dbg, 1);	
+		print_info(dbg, /*gather_lines_info=*/true);
+		print_info(dbg, false);	
 
 		dwarf_finish(dbg, &err);
 		return 1;
@@ -545,6 +599,7 @@ private:
 
 
 bool VarInfo::Imp::init(const std::string& file) {
+	_file = file;
 #ifdef __linux
 	_die_stack_indent_level = 0;
 	return read_file_debug(file.c_str());
