@@ -6,13 +6,16 @@ DEPS = varinfo_i.hpp varinfo.hpp
 
 all: main
 
-main: main.o varinfo.o $(DEPS)
-	$(CXX) $(CXXFLAGS) main.o varinfo.o -o $(TARGET) $(CXXLIBS)
+main: main.o varinfo.o scoping.o $(DEPS)
+	$(CXX) $(CXXFLAGS) main.o varinfo.o scoping.o -o $(TARGET) $(CXXLIBS)
 
 main.o: main.cpp $(DEPS)
 	$(CXX) $(CXXFLAGS) -c $<
 
 varinfo.o: varinfo.cpp $(DEPS)
+	$(CXX) $(CXXFLAGS) -c $<
+
+scoping.o: scoping.cpp
 	$(CXX) $(CXXFLAGS) -c $<
 
 clean:

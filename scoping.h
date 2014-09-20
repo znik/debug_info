@@ -22,6 +22,7 @@ struct scoping {
 			if (i->first > declline || i->second < declline) continue;
 			return *i;
 		}
+		return std::make_pair(0, 0);
 	}
 private:
 	typedef std::map<int, int> scope_t;

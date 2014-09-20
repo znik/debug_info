@@ -1,9 +1,15 @@
-int main() {
-	int g_a = 1;
-	while(1 != g_a) {
-		double g_b = 2.;
-		g_a += 1.;
+#include "test.h"
+
+inline void foo(int& a) {
+	 a+=1;
+
+}
+
+int main(int argc, char *argv[]) {
+	int a = infoo(2);
+	{
+		int b;
+		foo(a);
 	}
-	g_a += 3;
 	return 1;
 }

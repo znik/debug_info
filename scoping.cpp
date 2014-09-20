@@ -6,28 +6,33 @@
 #include <algorithm>
 #include "scoping.h"
 
-
-bool scoping::init(const std::vector<std::string>& srcfiles) {
-	for (const std::string& f : srcfiles) {
-		std::ifstream fstream;
-		fstream.open(f.c_str());
-		if (!fstream.is_open()) {
-			assert(false && "Scoping: cannot open file");
-			printf("Scoping: cannot open file %s\n", f.c_str());
-			return false;
-		}
-		int nesting_level = 0;
-		int lineno = 0;
-		struct tri_t {
-			static tri_t make(int level, int start, int end) { return tri_t(level, start, end); }
+namespace {
+	struct tri_t {
+			static tri_t *const make(int level, int start, int end) { return new tri_t(level, start, end); }
 			int _level, _start, _end;
 		private:
 			tri_t(int level, int start, int end) : _level(level), _start(start), _end(end) {};
 		};
-		std::vector<tri_t> scopes;
+}
+
+
+bool scoping::init(const std::vector<std::string>& srcfiles) {
+	_scopes.clear();
+	std::vector<tri_t*> scopes;
+	for (const std::string& f : srcfiles) {
+		std::ifstream fstream;
+		scopes.clear();
+		fstream.open(f.c_str());
+		if (!fstream.is_open()) {
+			printf("Scoping: cannot open file %s\n", f.c_str());
+			//assert(false && "Scoping: cannot open file");
+			continue;
+		}
+		int nesting_level = 0;
+		int lineno = 0;
 		struct look_for_empty_end_of_nesting_level {
 			look_for_empty_end_of_nesting_level(int level) : _level(level) {};
-			bool operator() (const tri_t &item) { return item._level == _level && NO_END_LINE == item._end; }
+			bool operator() (tri_t *& item) { return item->_level == _level && NO_END_LINE == item->_end; }
 		private:
 			const int _level;
 		};
@@ -51,17 +56,23 @@ bool scoping::init(const std::vector<std::string>& srcfiles) {
 						assert(false && "Closing bracket without opening bracket");
 						return false;
 					}
-					item->_end = lineno;
+					(*item)->_end = lineno;
 				}
 			}
 		}
-		assert(1 == nesting_level && "Not balanced brackets");
+		if (1 != nesting_level) {
+			printf("Not balanced brackets in file %s\n", f.c_str());
+			printf("Number of not balanced brackets is: %d\n",
+				nesting_level - 1);
+		}
+		//assert(1 == nesting_level && "Not balanced brackets");
 		--nesting_level;
-		scopes[nesting_level]._end = lineno;
+		scopes[0]->_end = lineno;
 		fstream.close();
 
-		for (auto i : scopes) {
-			_scopes[f][i._start] = i._end;
+		for (auto &i : scopes) {
+			_scopes[f][i->_start] = i->_end;
+			delete i;
 		}
 	}
 	return true;
