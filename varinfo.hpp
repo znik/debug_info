@@ -15,13 +15,13 @@
 
 class VarInfo : public IVarInfo {
 public:
-	VarInfo() {};
+	VarInfo();
 
 	/// \!brief Constructs variables data base by a binary file.
 	bool init(const std::string& file);
 
 	/// \!brief Returns variable base type given its occurence in the file and its name.
-	const std::string& type(const std::string& file, const size_t line, const std::string& name) const;
+	const std::string type(const std::string& file, const size_t line, const std::string& name) const;
 
 private:
 	VarInfo(const VarInfo&);
@@ -31,5 +31,5 @@ private:
 	std::string _file;
 
 	class Imp;	
-	const std::unique_ptr<Imp> _imp;
+	const std::auto_ptr<Imp> _imp;
 };

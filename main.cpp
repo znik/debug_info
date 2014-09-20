@@ -1,4 +1,6 @@
-#include "C:\\Users\\Nik\\Documents\\debug_info\\varinfo.hpp"
+#include <cstdio>
+#include <string>
+#include "varinfo.hpp"
 
 
 int main(int argc, char *argv[]) {
@@ -11,5 +13,14 @@ int main(int argc, char *argv[]) {
 		printf("Failed to initialize VarInfo.\n");
 		return 0;
 	}
+
+	const std::string name = "g_a";
+	int line = 5;
+	const std::string file =
+		"/cs/systems/home/nzaborov/debug_info/test.cpp";
+	
+	printf("Type of var \"%s\" at %s:%d is \"%s\"\n", name.c_str(),
+		file.c_str(), line,
+		vi.type(file, line, name).c_str()); 
 	return 1;
 }
