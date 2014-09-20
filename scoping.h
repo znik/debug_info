@@ -24,6 +24,15 @@ struct scoping {
 		}
 		return std::make_pair(0, 0);
 	}
+
+	int nextScope(const std::string& file, int line) {
+		const scope_t& sc = _scopes[file];
+		for (auto i = sc.begin(); sc.end() != i; ++i) {
+			if (i->first >= line)
+			return i->first;
+		}
+		return 0;
+	}
 private:
 	typedef std::map<int, int> scope_t;
 	std::map<std::string, scope_t> _scopes;

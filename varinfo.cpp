@@ -237,8 +237,8 @@ private:
 				_subprogram_decl_line = uval;
 			printf("\"%lli\" ", uval);
 			if (0 == strcmp(tag_name, "DW_TAG_formal_parameter")) {
-				// FIXME
-				// Change decl to open bracket line ???
+				if (!!var)
+					uval = _scoping.nextScope(var->file(), uval);
 			}
 			if (!!var)
 				var->setLine(uval);
