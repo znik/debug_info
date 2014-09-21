@@ -1,4 +1,7 @@
+/// Simple scopes parser for C/C++ programs where scopes are represented
+/// as pairs of opened and closed brackets '{..}'.
 ///
+/// Sep - 2014, Nik Zaborovsky
 #include <vector>
 #include <string>
 #include <fstream>
@@ -16,16 +19,17 @@ namespace {
 }
 
 
-bool scoping::init(const std::vector<std::string>& srcfiles) {
+bool scoping::init(const std::vector<std::string>& srcfiles, const std::string& paths_prefix) {
 	_scopes.clear();
+	_path_prefix = paths_prefix;
+
 	std::vector<tri_t*> scopes;
 	for (const std::string& f : srcfiles) {
 		std::ifstream fstream;
 		scopes.clear();
-		fstream.open(f.c_str());
+		fstream.open((_path_prefix + f).c_str());
 		if (!fstream.is_open()) {
 			printf("Scoping: cannot open file %s\n", f.c_str());
-			//assert(false && "Scoping: cannot open file");
 			continue;
 		}
 		int nesting_level = 0;
@@ -64,6 +68,7 @@ bool scoping::init(const std::vector<std::string>& srcfiles) {
 			printf("Not balanced brackets in file %s\n", f.c_str());
 			printf("Number of not balanced brackets is: %d\n",
 				nesting_level - 1);
+			printf("There can be incorrect scoping in file %s\n", f.c_str());
 		}
 		//assert(1 == nesting_level && "Not balanced brackets");
 		--nesting_level;

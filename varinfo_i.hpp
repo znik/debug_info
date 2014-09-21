@@ -1,3 +1,6 @@
+/// Interface for variable type information parser.
+///
+/// Sep - 2014, Nik Zaborovsky
 ///
 #pragma once
 

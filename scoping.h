@@ -1,3 +1,7 @@
+/// Simple scopes parser for C/C++ programs where scopes are represented
+/// as pairs of opened and closed brackets '{..}'.
+///
+/// Sep - 2014, Nik Zaborovsky
 #pragma once
 #include <map>
 #include <string>
@@ -7,7 +11,8 @@
 
 struct scoping {
 	enum {NO_END_LINE = -1};
-	bool init(const std::vector<std::string>& /*srcfiles*/);
+	bool init(const std::vector<std::string>& /*srcfiles*/,
+		const std::string& paths_prefix = std::string());
 	int endline(const std::string& file, int startline) const {
 		assert(scope_t() != _scopes.at(file) && "Scoping: no file");
 		if (0 == _scopes.at(file).at(startline))
@@ -36,4 +41,5 @@ struct scoping {
 private:
 	typedef std::map<int, int> scope_t;
 	std::map<std::string, scope_t> _scopes;
+	std::string _path_prefix;
 };
