@@ -1,15 +1,8 @@
-#include "test.h"
-
-inline void foo(int& a) {
-	 a+=1;
-
+void foo(volatile const char & a) {
+	a;
 }
 
 int main(int argc, char *argv[]) {
-	int a = infoo(2);
-	{
-		int b;
-		foo(a);
-	}
+		
 	return 1;
 }

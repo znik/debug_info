@@ -27,6 +27,7 @@
 #include <vector>
 #include <string>
 #include <cassert>
+#include <sstream>
 #include <algorithm>
 #include <map>
 
@@ -34,12 +35,12 @@
 #include "scoping.h"
 
 
-#define DEBUG_PRINT
+//#define DEBUG_PRINT
 
 #ifdef DEBUG_PRINT
-#define MY_PRINT(x)	MY_PRINT(x)
+#define MY_PRINT(...)	printf(__VA_ARGS__)
 #else
-#define MY_PRINT(x)
+#define MY_PRINT(...)
 #endif
 
 namespace {
@@ -47,14 +48,19 @@ namespace {
 	// "char", etc. Base types are identified by an offset in .debug_info section.
 	typedef std::map<size_t, std::string> BaseTypes_t;
 
+	// BaseType suffix describes intermediate base type modifier such as const or 'pointer'
+	typedef std::map<size_t, std::string> BaseTypeSuffix_t;
 	// SrcFiles describe source files described in .debug_info section.
 	typedef std::map<size_t, std::string> SrcFiles_t;
 
 	// Variables describe every variable declared in a program
 	struct Variable {
 		enum {VALUE_NOT_SET = -1};
-		Variable(SrcFiles_t *const srcfiles, BaseTypes_t *const basetypes) :
+		Variable(SrcFiles_t *const srcfiles,
+			BaseTypes_t *const basetypes,
+			BaseTypeSuffix_t *const basetypesuffix) :
 			_srcfiles(srcfiles), _basetypes(basetypes),
+			_basetypesuffix(basetypesuffix),
 			_line(VALUE_NOT_SET), _vis_ended_line(VALUE_NOT_SET),
 			_file_id(VALUE_NOT_SET), _type_offset(VALUE_NOT_SET) {};
 
@@ -87,13 +93,27 @@ namespace {
 		}
 		const std::string& name() const { return _name; }
 		const std::string type() const {
-			// FIXME go up before getting a name of a base type
-			return (*_basetypes)[_type_offset];
+			size_t current_offset = _type_offset;
+			static const int max_refs = 256;
+			int i = max_refs;	
+			int next_offset = 0;
+			std::string suffix;
+			do {
+				std::stringstream ss((*_basetypes)[current_offset]);
+				ss >> next_offset;
+				if (ss.rdstate() & std::ios::failbit)
+					return (*_basetypes)[current_offset] + suffix;
+				suffix += (*_basetypesuffix)[current_offset];
+				current_offset = next_offset;
+			} while(--i > 0);
+			return std::string();
 		}
+		size_t type_offset() const { return _type_offset; }
 
 	private:
 		SrcFiles_t*		_srcfiles;
 		BaseTypes_t*	_basetypes;
+		BaseTypeSuffix_t* _basetypesuffix;		
 
 		size_t		_line;			// declaration line (start of the scope for the arguments)
 		size_t		_vis_ended_line;// line where local visibility of the var ends
@@ -125,15 +145,15 @@ public:
 #ifndef __linux
 #pragma warning(suppress : 4172)
 #endif
-		// FIXME last element is required !!!
 		if (0 != variants.size())
-			return variants[variants.size() - 1]->type();
+			return variants.rbegin()->second->type();
 		return "<Unknown>";
 	}
 
 private:
 	Variable& newVar() {
-		_vars.push_back(Variable(&_src_files, &_base_types));
+		_vars.push_back(Variable(&_src_files, &_base_types,
+			&_base_type_suffix));
 		return _vars[_vars.size() - 1];
 	}
 
@@ -151,6 +171,7 @@ private:
 	Vars_t		_vars;
 	SrcFiles_t	_src_files;
 	BaseTypes_t	_base_types;
+	BaseTypeSuffix_t _base_type_suffix;
 
 	scoping		_scoping;
 
@@ -167,7 +188,7 @@ private:
 		Dwarf_Debug dbg, Dwarf_Die die, Dwarf_Half attr,
 		Dwarf_Attribute attr_in, int die_indent_level,
 		const char *tag_name, char **srcfiles, const char **const cfile,
-		Dwarf_Signed cnt,
+		Dwarf_Signed cnt, Dwarf_Off parent_offset,
 		Variable *const var = 0, std::string *const basetype = 0) {
 
 		const char *v = 0;
@@ -177,18 +198,28 @@ private:
 		#define SEQ(s) (0== strcmp(v, s))
 
 		int res = dwarf_get_AT_name(attr, &v);
-		if (DW_DLV_OK != res) { SAY_AND_GO("Failed to get attribute's name\n"); return; }
+		if (DW_DLV_OK != res) {
+			SAY_AND_GO("Failed to get attribute's name\n");
+			return;
+		}
+
+		int sres = 0;
 
 		MY_PRINT("%*s%s : ", 2 * die_indent_level, " ", v);
 		const char * form = 0;
 		Dwarf_Half theform = 0;
 		res = dwarf_whatform(attr_in, &theform, &err);
-		if (DW_DLV_OK != res) { SAY_AND_GO("whatform error\n"); goto dealloc_attr; }
+		if (DW_DLV_OK != res) {
+			SAY_AND_GO("whatform error\n");
+			goto dealloc_attr;
+		}
 		res = dwarf_get_FORM_name(theform, &form);
-		if (DW_DLV_OK != res) { SAY_AND_GO("failed to read form information\n"); goto dealloc_form; }
+		if (DW_DLV_OK != res){
+			SAY_AND_GO("failed to read form information\n");
+			goto dealloc_form;
+		}
 		MY_PRINT("[%s]", form);
 
-		int sres = 0;
 		if (SEQ("DW_AT_comp_dir")) {
 			char *name = 0;
 			sres = dwarf_formstring(attr_in, &name, &err);
@@ -204,8 +235,12 @@ private:
 			if (0 == die_indent_level)
 				_file = name;
 			MY_PRINT("\"%s\" ", name);
-			if (!!var) { var->setName(name); var->setVisEndLine(_vis_end_line); }
-			} else if (!!basetype) { *basetype = name; }
+			if (!!var) {
+				var->setName(name);
+				var->setVisEndLine(_vis_end_line);
+			} else if (!!basetype) {
+				*basetype = name;
+			}
 			dwarf_dealloc(dbg, name, DW_DLA_STRING);
 		} else if (SEQ("DW_AT_decl_file") || SEQ("DW_AT_call_file")) {
 			Dwarf_Signed val = 0;
@@ -232,7 +267,7 @@ private:
 				uval = (Dwarf_Unsigned)val;	
 			}
 			MY_PRINT("\"%lli\" ", uval);
-			if ((0 == strcmp(tag_name, "DW_TAG_formal_parameter") && !!var)
+			if (0 == strcmp(tag_name, "DW_TAG_formal_parameter") && !!var)
 				uval = _scoping.nextScope(var->file(), uval);
 			if (!!var)
 				var->setLine(uval);
@@ -248,7 +283,7 @@ private:
 				_vis_start_line = _pcaddr2line[addr];
 			if (SEQ("DW_AT_high_pc"))	
 				_vis_end_line = _pcaddr2line[addr];
-			MY_PRINT("line:%d \"0x%08llx\" ",
+			MY_PRINT("line:%llu \"0x%08llx\" ",
 				_pcaddr2line[addr], addr);
 		}
 		else if (SEQ("DW_AT_type")) {
@@ -258,15 +293,34 @@ private:
 				MY_PRINT("failed to read ref attribute\n");
 				goto dealloc_form;
 			}
-			if (!!var)
+			if (!!var) {
 				var->setTypeOffset(offset);
+			}
+			else if (!!basetype) {
+				std::stringstream ss;
+				ss << offset;
+				*basetype = ss.str();
+				//printf("BEFORE: %s %llu\n", tag_name, offset);
+				if (0 == strcmp(tag_name, "DW_TAG_pointer_type"))
+					_base_type_suffix[parent_offset] = "*";
+				else if (0 == strcmp(tag_name, "DW_TAG_const_type"))
+					_base_type_suffix[parent_offset] = " const";
+				else if (0 == strcmp(tag_name, "DW_TAG_reference_type"))
+					_base_type_suffix[parent_offset] = "&";
+				else if (0 == strcmp(tag_name, "DW_TAG_volatile_type"))
+					_base_type_suffix[parent_offset] = " volatile";
+				else {
+					assert(false && "NOT SUPPORTED MODIFIER");
+				}
+				//printf("AFTER: %llu -> %s\n", offset, _base_type_suffix[offset].c_str());
+			}
 			MY_PRINT("<0x%08llu> ", offset);
 		}
 		MY_PRINT("\n");
 dealloc_form:
-		dwarf_dealloc(dbg, form, DW_DLA_STRING);
-dealloc_attr:
-		dwarf_dealloc(dbg, v, DW_DLA_STRING);
+		//dwarf_dealloc(dbg, (char *)form, DW_DLA_STRING);
+dealloc_attr:;
+		//dwarf_dealloc(dbg, (void *)v, DW_DLA_STRING);
 	}
 
 	bool print_one_die(Dwarf_Debug dbg, Dwarf_Die die,
@@ -283,6 +337,13 @@ dealloc_attr:
 		}
 
 		const char * tagname = 0;
+		Dwarf_Signed atcnt = 0;
+		Dwarf_Attribute *atlist = 0;
+		int atres = 0;
+		Variable *var = 0;
+		std::string *basetype = 0;
+		Dwarf_Off offset = 0;	
+	
 		int res = dwarf_get_TAG_name(tag, &tagname);
 		if (DW_DLV_OK != res) {
 			MY_PRINT("Failed to get the name of the tag\n");
@@ -297,6 +358,10 @@ dealloc_attr:
 			&& !SEQ1("DW_TAG_lexical_block")
 			&& !SEQ1("DW_TAG_variable")
 			&& !SEQ1("DW_TAG_subprogram")
+			&& !SEQ1("DW_TAG_pointer_type")
+			&& !SEQ1("DW_TAG_const_type")
+			&& !SEQ1("DW_TAG_reference_type")
+			&& !SEQ1("DW_TAG_volatile_type")
 			)
 			goto dealloc_tag_name;
 
@@ -304,11 +369,6 @@ dealloc_attr:
 			_vis_end_line = 0;
 
 		MY_PRINT("\n%*s[%d]%s ", 2 * die_indent_level, " ", die_indent_level, tagname);
-
-		Variable *var = 0;
-		std::string *basetype = 0;
-
-		Dwarf_Off offset = 0;	
 		res = dwarf_die_CU_offset(die, &offset, &err);
 		if (DW_DLV_OK != res) {
 			MY_PRINT("Failed to get die CU offset\n");
@@ -318,16 +378,17 @@ dealloc_attr:
 		if (0 == strcmp(tagname, "DW_TAG_variable") ||
 			0 == strcmp(tagname, "DW_TAG_formal_parameter")) {
 			var = &newVar();
-		} else if (0 == strcmp(tagname, "DW_TAG_base_type")) {
+		} else if (0 == strcmp(tagname, "DW_TAG_base_type") ||
+			0 == strcmp(tagname, "DW_TAG_pointer_type") ||
+			0 == strcmp(tagname, "DW_TAG_const_type") ||
+			0 == strcmp(tagname, "DW_TAG_reference_type") ||
+			0 == strcmp(tagname, "DW_TAG_volatile_type")) {
 			basetype = &newBaseType(offset);
 		}
 
-		MY_PRINT("<0x%08llu>", offset);
-		MY_PRINT("\r\n");
+		MY_PRINT("<0x%08llu>\r\n", offset);
 
-		Dwarf_Signed atcnt = 0;
-		Dwarf_Attribute *atlist = 0;
-		int atres = dwarf_attrlist(die, &atlist, &atcnt, &err);
+		atres = dwarf_attrlist(die, &atlist, &atcnt, &err);
 		if (DW_DLV_ERROR == atres)
 			MY_PRINT("Error while getting the attributes\n");
 		else if (DW_DLV_NO_ENTRY == atres)
@@ -343,7 +404,7 @@ dealloc_attr:
 			MY_PRINT("%*s", 2 * die_indent_level + 1, " ");
 			get_attribute(dbg, die, attr, atlist[i],
 				die_indent_level, tagname,
-				srcfiles, cfile, cnt, var, basetype);
+				srcfiles, cfile, cnt, offset, var, basetype);
 		}
 		for (Dwarf_Signed i = 0; i < atcnt; ++i)
 			dwarf_dealloc(dbg, atlist[i], DW_DLA_ATTR);
@@ -351,7 +412,8 @@ dealloc_attr:
 			dwarf_dealloc(dbg, atlist, DW_DLA_LIST);
 
 		if (!!var) {
-			if (Variable::VALUE_NOT_SET == var->line()) {
+			if (size_t(Variable::VALUE_NOT_SET) == var->line() ||
+				var->name().empty()) {
 				cancelVar();
 				return true;
 			}
@@ -360,21 +422,26 @@ dealloc_attr:
 			std::pair<int, int> ranges = _scoping.scope(var->file(),
 				var->line());
 			var->setVisEndLine(ranges.second);
-			MY_PRINT("@VARIABLE: \"%s\" %lu-%lu (%s)\n",
+			printf("@VARIABLE: [%lu] \"%s\" %lu-%lu (%s)\n",
+				var->type_offset(),
 				var->name().c_str(),
 				var->line(), var->visEndsLine(),
 				var->file().c_str());
 		}
-		dwarf_dealloc(dbg, tag_name, DW_DLA_STRING);
+		else if (!!basetype) {
+			printf("@BASETYPE: %llu[%s] -> %s \"%s\"\n", offset,
+				tagname, basetype->c_str(), _base_type_suffix[offset].c_str());
+		}
+		//dwarf_dealloc(dbg, (void *)tagname, DW_DLA_STRING);
 		return true;
 dealloc_tag_name:
-		dwarf_dealloc(dbg, tag_name, DW_DLA_STRING);
+		//dwarf_dealloc(dbg, (void *)tagname, DW_DLA_STRING);
 		return false;
 	}
 
 	void print_die_and_children(Dwarf_Debug dbg,
 		Dwarf_Die in_die_in, Dwarf_Bool is_info, char **srcfiles,
-		const char * *const cfile, Dwarf_Signed cnt) {
+		const char **const cfile, Dwarf_Signed cnt) {
 
 		Dwarf_Die in_die = in_die_in;
 		Dwarf_Error_s *err;

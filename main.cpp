@@ -14,8 +14,8 @@ int main(int argc, char *argv[]) {
 		return 0;
 	}
 
-	const std::string name = "g_a";
-	int line = 5;
+	const std::string name = "a";
+	int line = 2;
 	const std::string file =
 		"/cs/systems/home/nzaborov/debug_info/test.cpp";
 	
