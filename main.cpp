@@ -15,7 +15,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	const std::string name = argv[2]; //"v1";
-	int line = 11;
+	int line = 20;
 	const std::string file =
 		"/cs/systems/home/nzaborov/debug_info/test.cpp";
 	

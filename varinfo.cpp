@@ -300,7 +300,6 @@ private:
 				std::stringstream ss;
 				ss << offset;
 				*basetype = ss.str();
-				//printf("BEFORE: %s %llu\n", tag_name, offset);
 				if (0 == strcmp(tag_name, "DW_TAG_pointer_type"))
 					_base_type_suffix[parent_offset] = "*";
 				else if (0 == strcmp(tag_name, "DW_TAG_const_type"))
@@ -309,10 +308,6 @@ private:
 					_base_type_suffix[parent_offset] = "&";
 				else if (0 == strcmp(tag_name, "DW_TAG_volatile_type"))
 					_base_type_suffix[parent_offset] = " volatile";
-				else {
-					assert(false && "NOT SUPPORTED MODIFIER");
-				}
-				//printf("AFTER: %llu -> %s\n", offset, _base_type_suffix[offset].c_str());
 			}
 			MY_PRINT("<0x%08llu> ", offset);
 		}
@@ -362,6 +357,8 @@ dealloc_attr:;
 			&& !SEQ1("DW_TAG_const_type")
 			&& !SEQ1("DW_TAG_reference_type")
 			&& !SEQ1("DW_TAG_volatile_type")
+			&& !SEQ1("DW_TAG_typedef")
+			&& !SEQ1("DW_TAG_structure_type")
 			)
 			goto dealloc_tag_name;
 
@@ -382,7 +379,9 @@ dealloc_attr:;
 			0 == strcmp(tagname, "DW_TAG_pointer_type") ||
 			0 == strcmp(tagname, "DW_TAG_const_type") ||
 			0 == strcmp(tagname, "DW_TAG_reference_type") ||
-			0 == strcmp(tagname, "DW_TAG_volatile_type")) {
+			0 == strcmp(tagname, "DW_TAG_volatile_type") ||
+			0 == strcmp(tagname, "DW_TAG_typedef") ||
+			0 == strcmp(tagname, "DW_TAG_structure_type")) {
 			basetype = &newBaseType(offset);
 		}
 
