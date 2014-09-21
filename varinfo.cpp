@@ -103,7 +103,7 @@ namespace {
 				ss >> next_offset;
 				if (ss.rdstate() & std::ios::failbit)
 					return (*_basetypes)[current_offset] + suffix;
-				suffix += (*_basetypesuffix)[current_offset];
+				suffix = (*_basetypesuffix)[current_offset] + suffix;
 				current_offset = next_offset;
 			} while(--i > 0);
 			return std::string();
