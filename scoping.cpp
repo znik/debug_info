@@ -27,9 +27,14 @@ bool scoping::init(const std::vector<std::string>& srcfiles, const std::string& 
 	for (const std::string& f : srcfiles) {
 		std::ifstream fstream;
 		scopes.clear();
-		fstream.open((_path_prefix + f).c_str());
+	
+		std::string file_path;
+		if ('/' != f[0])
+			file_path = _path_prefix;
+		file_path += f;
+		fstream.open(file_path.c_str());
 		if (!fstream.is_open()) {
-			printf("Scoping: cannot open file %s\n", f.c_str());
+			printf("Scoping: cannot open file %s\n", file_path.c_str());
 			continue;
 		}
 		int nesting_level = 0;
@@ -76,7 +81,7 @@ bool scoping::init(const std::vector<std::string>& srcfiles, const std::string& 
 		fstream.close();
 
 		for (auto &i : scopes) {
-			_scopes[f][i->_start] = i->_end;
+			_scopes[file_path][i->_start] = i->_end;
 			delete i;
 		}
 	}

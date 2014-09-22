@@ -44,12 +44,15 @@
 #endif
 
 namespace {
-	// BaseTypes describe build-in and derived system data types like "int",
-	// "char", etc. Base types are identified by an offset in .debug_info section.
-	typedef std::map<size_t, std::string> BaseTypes_t;
+	// BaseTypes describe build-in and derived system data types like
+	// "int", "char", etc. Base types are identified by an offset in
+	//.debug_info section. Offsets are defined per compilation unit.
+	typedef std::map<size_t, std::string> BaseTypesFile_t;
+	typedef std::map<std::string, BaseTypesFile_t> BaseTypes_t;
 
 	// BaseType suffix describes intermediate base type modifier such as const or 'pointer'
-	typedef std::map<size_t, std::string> BaseTypeSuffix_t;
+	typedef std::map<size_t, std::string> BaseTypeSuffixFile_t;
+	typedef std::map<std::string, BaseTypeSuffixFile_t> BaseTypeSuffix_t;
 	// SrcFiles describe source files described in .debug_info section.
 	typedef std::map<size_t, std::string> SrcFiles_t;
 
@@ -78,20 +81,20 @@ namespace {
 				_file_id = _srcfiles->size() - 1;
 			}
 		}
-		void setVisEndLine(size_t vis_end_line) {
+		inline void setVisEndLine(size_t vis_end_line) {
 			_vis_ended_line = vis_end_line;
 		};
-		void setName(const std::string& name) { _name = name; }
-		void setTypeOffset(size_t type_offset) {
+		inline void setName(const std::string& name) { _name = name; }
+		inline void setTypeOffset(size_t type_offset) {
 			 _type_offset = type_offset;
 		}
 
-		size_t line() const { return _line; }
-		size_t visEndsLine() const { return _vis_ended_line; }
-		const std::string& file() {
-			return (*_srcfiles)[_file_id];
+		inline size_t line() const { return _line; }
+		inline size_t visEndsLine() const { return _vis_ended_line; }
+		const std::string& file() const {
+			return (*_srcfiles).at(_file_id);
 		}
-		const std::string& name() const { return _name; }
+		inline const std::string& name() const { return _name; }
 		const std::string type() const {
 			size_t current_offset = _type_offset;
 			static const int max_refs = 256;
@@ -99,16 +102,18 @@ namespace {
 			int next_offset = 0;
 			std::string suffix;
 			do {
-				std::stringstream ss((*_basetypes)[current_offset]);
+				std::stringstream ss((*_basetypes)[file()][current_offset]);
 				ss >> next_offset;
 				if (ss.rdstate() & std::ios::failbit)
-					return (*_basetypes)[current_offset] + suffix;
-				suffix = (*_basetypesuffix)[current_offset] + suffix;
+					return (*_basetypes)[file()][current_offset] +
+						suffix;
+				suffix = (*_basetypesuffix)[file()][current_offset] +
+					suffix;
 				current_offset = next_offset;
 			} while(--i > 0);
 			return std::string();
 		}
-		size_t type_offset() const { return _type_offset; }
+		inline size_t type_offset() const { return _type_offset; }
 
 	private:
 		SrcFiles_t*		_srcfiles;
@@ -132,7 +137,6 @@ public:
 	const std::string type(const std::string& file,
 		const size_t line,
 		const std::string& name) const {
-		
 		std::map<size_t, Variable*> variants;
 		for (unsigned i = 0; i < _vars.size(); ++i) {
 			Variable *const v = const_cast<Variable *const>(&_vars[i]);
@@ -161,8 +165,8 @@ private:
 		_vars.pop_back();
 	}
 
-	std::string& newBaseType(const size_t offset) {
-		return _base_types[offset];
+	std::string& newBaseType(const size_t offset, const std::string& file) {
+		return _base_types[file][offset];
 	}
 
 private:
@@ -252,9 +256,11 @@ private:
 				uval = (Dwarf_Unsigned)val;
 			}
 			*cfile = srcfiles[uval - 1];
-			// FIXME CHANGE TO FULL PATH!!!
+			std::string full_path = *cfile;
+			if ('/' != full_path[0])
+				full_path = _path_prefix + full_path;
 			if (!!var)
-				var->setFile(*cfile);
+				var->setFile(full_path);
 			MY_PRINT("\"%s\" ", *cfile);
 		}
 		else if (SEQ("DW_AT_decl_line")) {
@@ -301,13 +307,13 @@ private:
 				ss << offset;
 				*basetype = ss.str();
 				if (0 == strcmp(tag_name, "DW_TAG_pointer_type"))
-					_base_type_suffix[parent_offset] = "*";
+					_base_type_suffix[_file][parent_offset] = "*";
 				else if (0 == strcmp(tag_name, "DW_TAG_const_type"))
-					_base_type_suffix[parent_offset] = " const";
+					_base_type_suffix[_file][parent_offset] = " const";
 				else if (0 == strcmp(tag_name, "DW_TAG_reference_type"))
-					_base_type_suffix[parent_offset] = "&";
+					_base_type_suffix[_file][parent_offset] = "&";
 				else if (0 == strcmp(tag_name, "DW_TAG_volatile_type"))
-					_base_type_suffix[parent_offset] = " volatile";
+					_base_type_suffix[_file][parent_offset] = " volatile";
 			}
 			MY_PRINT("<0x%08llu> ", offset);
 		}
@@ -348,7 +354,6 @@ dealloc_attr:;
 		if (
 			!SEQ1("DW_TAG_compile_unit")
 			&& !SEQ1("DW_TAG_base_type")
-//			&& !SEQ1("DW_TAG_typedef")
 			&& !SEQ1("DW_TAG_formal_parameter")
 			&& !SEQ1("DW_TAG_lexical_block")
 			&& !SEQ1("DW_TAG_variable")
@@ -359,6 +364,7 @@ dealloc_attr:;
 			&& !SEQ1("DW_TAG_volatile_type")
 			&& !SEQ1("DW_TAG_typedef")
 			&& !SEQ1("DW_TAG_structure_type")
+			&& !SEQ1("DW_TAG_class_type")
 			)
 			goto dealloc_tag_name;
 
@@ -381,8 +387,9 @@ dealloc_attr:;
 			0 == strcmp(tagname, "DW_TAG_reference_type") ||
 			0 == strcmp(tagname, "DW_TAG_volatile_type") ||
 			0 == strcmp(tagname, "DW_TAG_typedef") ||
-			0 == strcmp(tagname, "DW_TAG_structure_type")) {
-			basetype = &newBaseType(offset);
+			0 == strcmp(tagname, "DW_TAG_structure_type") ||
+			0 == strcmp(tagname, "DW_TAG_class_type")) {
+			basetype = &newBaseType(offset, _file);
 		}
 
 		MY_PRINT("<0x%08llu>\r\n", offset);
@@ -428,8 +435,9 @@ dealloc_attr:;
 				var->file().c_str());
 		}
 		else if (!!basetype) {
-			printf("@BASETYPE: %llu[%s] -> %s \"%s\"\n", offset,
-				tagname, basetype->c_str(), _base_type_suffix[offset].c_str());
+			printf("@BASETYPE: %llu[%s] -> %s \"%s\" (%s)\n", offset,
+				tagname, basetype->c_str(),
+				_base_type_suffix[_file][offset].c_str(), _file.c_str());
 		}
 		//dwarf_dealloc(dbg, (void *)tagname, DW_DLA_STRING);
 		return true;
@@ -692,7 +700,7 @@ const std::string VarInfo::type(const std::string& file, const size_t line, cons
 	return _imp->type(file, line, name);
 }
 
-bool VarInfo::init(const std::string& file) {
+bool VarInfo::init(const std::string& file, const std::string& prefix) {
 	_file = file;
-	return _imp->init(_file);
+	return _imp->init(_file, prefix);
 }
