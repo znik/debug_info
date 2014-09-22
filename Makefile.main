@@ -1,8 +1,0 @@
-TARGET = main
-CXX = g++
-CXXFLAGS = -Wall -g -O0
-CXXLIBS = -lelf -ldwarf
-
-all: main.cpp
-	$(CXX) $(CXXFLAGS) $< -o $(TARGET) $(CXXLIBS)
-
