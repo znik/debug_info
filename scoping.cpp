@@ -22,7 +22,7 @@ namespace {
 bool scoping::init(const std::vector<std::string>& srcfiles, const std::string& paths_prefix) {
 	_scopes.clear();
 	_path_prefix = paths_prefix;
-
+	static const std::string built_in = "<built-in>";
 	std::vector<tri_t*> scopes;
 	for (const std::string& f : srcfiles) {
 		std::ifstream fstream;
@@ -32,8 +32,12 @@ bool scoping::init(const std::vector<std::string>& srcfiles, const std::string& 
 		if ('/' != f[0])
 			file_path = _path_prefix;
 		file_path += f;
+		if (0 == file_path.compare(file_path.size() - built_in.size(),
+			built_in.size(), built_in.c_str()))
+			continue;
 		fstream.open(file_path.c_str());
 		if (!fstream.is_open()) {
+			
 			printf("Scoping: cannot open file %s\n", file_path.c_str());
 			continue;
 		}
