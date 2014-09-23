@@ -1,23 +1,20 @@
-TARGET = main
 CXX = g++
-CXXFLAGS = -Wall -g -O0 -std=c++0x
+CXXFLAGS = -Wall -O3 -std=c++0x
 CXXLIBS = -lelf -ldwarf
-DEPS = varinfo_i.hpp varinfo.hpp
+#DEPS = varinfo_i.hpp varinfo.hpp
 
-all: main
+all: libdebug_info.a
 
-main: main.o varinfo.o scoping.o $(DEPS)
-	$(CXX) $(CXXFLAGS) main.o varinfo.o scoping.o -o $(TARGET) $(CXXLIBS)
+libdebug_info.a: varinfo.o scoping.o
+	ar rcs $@ varinfo.o scoping.o
+	ranlib $@
 
-main.o: main.cpp $(DEPS)
-	$(CXX) $(CXXFLAGS) -c $<
-
-varinfo.o: varinfo.cpp $(DEPS)
+varinfo.o: varinfo.cpp
 	$(CXX) $(CXXFLAGS) -c $<
 
 scoping.o: scoping.cpp
 	$(CXX) $(CXXFLAGS) -c $<
 
 clean:
-	rm -rf *.o $(TARGET)
+	rm -rf *.o libdebug_info.a
 

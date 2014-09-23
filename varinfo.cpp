@@ -428,14 +428,14 @@ dealloc_attr:;
 			std::pair<int, int> ranges = _scoping.scope(var->file(),
 				var->line());
 			var->setVisEndLine(ranges.second);
-			printf("@VARIABLE: [%lu] \"%s\" %lu-%lu (%s)\n",
+			MY_PRINT("@VARIABLE: [%lu] \"%s\" %lu-%lu (%s)\n",
 				var->type_offset(),
 				var->name().c_str(),
 				var->line(), var->visEndsLine(),
 				var->file().c_str());
 		}
 		else if (!!basetype) {
-			printf("@BASETYPE: %llu[%s] -> %s \"%s\" (%s)\n", offset,
+			MY_PRINT("@BASETYPE: %llu[%s] -> %s \"%s\" (%s)\n", offset,
 				tagname, basetype->c_str(),
 				_base_type_suffix[_file][offset].c_str(), _file.c_str());
 		}

@@ -1,0 +1,5 @@
+# NOTE: CXXLIBS should be defined in the makefile
+# from where this file is being included.
+#
+# See Makefile.main for example
+CXXLIBS += -lelf -ldwarf

@@ -1,0 +1,19 @@
+TARGET = main
+CXX = g++
+CXXFLAGS = -Wall -g -O0 -std=c++0x
+
+# The order of static libs matters
+CXXLIBS += -L. -ldebug_info
+include debug_info.deps
+
+all: main
+
+main: main.o
+	$(CXX) $(CXXFLAGS) main.o -o $(TARGET) $(CXXLIBS)
+
+main.o: main.cpp
+	$(CXX) $(CXXFLAGS) -c $<
+
+clean:
+	rm -rf main.o $(TARGET)
+
