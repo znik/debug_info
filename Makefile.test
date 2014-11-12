@@ -1,6 +1,6 @@
 TARGET = test
 CXX = g++
-CXXFLAGS = -g -Wall -O0 -ggdb --save-temps
+CXXFLAGS = -g -Wall -O0 -ggdb --save-temps -std=c++0x
 
 all: test.cpp
 	$(CXX) $(CXXFLAGS) $< -o $(TARGET)

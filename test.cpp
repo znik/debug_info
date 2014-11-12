@@ -14,12 +14,12 @@ int main(int argc, char *argv[]) {
 	int *const v2 = 0;
 	const char * v3 = 0;
 	const int &v4 = 2;
-	const int &v5 = 3;
 	volatile char v6;
 	static double *	v7;
 	volatile char **const v8 = 0;
 	const my_type_t & v9 = my_type_t();
 	my_struct_s* v10;
+	auto v11 = v10->x;
 	
 	return 1;
 }
