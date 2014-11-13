@@ -23,6 +23,8 @@ public:
 	/// \!brief Returns variable base type given its occurence in the file and its name.
 	const std::string type(const std::string& file, const size_t line, const std::string& name) const;
 
+	const std::string fieldname(const std::string& file, const size_t line, const std::string& name, const unsigned offset) const;
+
 private:
 	VarInfo(const VarInfo&);
 	VarInfo& operator=(const VarInfo&);

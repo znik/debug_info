@@ -50,6 +50,11 @@ namespace {
 	typedef std::map<size_t, std::string> BaseTypesFile_t;
 	typedef std::map<std::string, BaseTypesFile_t> BaseTypes_t;
 
+	// int - hash(type offset + file name)
+	auto hasher = std::hash<std::string>();
+	typedef std::map<unsigned, std::string> FieldsNames_t;
+	typedef std::map<int, FieldsNames_t> StructFields_t;
+
 	// BaseType suffix describes intermediate base type modifier such as const or 'pointer'
 	typedef std::map<size_t, std::string> BaseTypeSuffixFile_t;
 	typedef std::map<std::string, BaseTypeSuffixFile_t> BaseTypeSuffix_t;
@@ -118,7 +123,7 @@ namespace {
 	private:
 		SrcFiles_t*		_srcfiles;
 		BaseTypes_t*	_basetypes;
-		BaseTypeSuffix_t* _basetypesuffix;		
+		BaseTypeSuffix_t* _basetypesuffix;
 
 		size_t		_line;			// declaration line (start of the scope for the arguments)
 		size_t		_vis_ended_line;// line where local visibility of the var ends
@@ -134,9 +139,29 @@ namespace {
 class VarInfo::Imp {
 public:
 	bool init(const std::string&, const std::string& = std::string());
+
+	const std::string fieldname(const std::string &file, const size_t line, const std::string &name,
+		const unsigned offset) const {
+
+		const Variable *const var = get_var(file, line, name);
+		if (!var)
+			return "<Unknown>";
+		int hash = hasher(var->file() + std::to_string(var->type_offset()));
+		return _struct_fields[hash][offset];
+	}
+
 	const std::string type(const std::string& file,
 		const size_t line,
 		const std::string& name) const {
+		const Variable *const var = get_var(file, line, name);
+		if (!!var)
+			return var->type();
+		return "<Unknown>";
+	}
+private:
+	const Variable *const get_var(const std::string& file,
+		const size_t line, const std::string& name) const {
+ 
 		std::map<size_t, Variable*> variants;
 		for (unsigned i = 0; i < _vars.size(); ++i) {
 			Variable *const v = const_cast<Variable *const>(&_vars[i]);
@@ -150,8 +175,8 @@ public:
 #pragma warning(suppress : 4172)
 #endif
 		if (0 != variants.size())
-			return variants.rbegin()->second->type();
-		return "<Unknown>";
+			return variants.rbegin()->second;
+		return 0;
 	}
 
 private:
@@ -169,15 +194,28 @@ private:
 		return _base_types[file][offset];
 	}
 
+
 private:
 	std::string _path_prefix;
 
 	Vars_t		_vars;
 	SrcFiles_t	_src_files;
 	BaseTypes_t	_base_types;
+
 	BaseTypeSuffix_t _base_type_suffix;
+	mutable StructFields_t _struct_fields;
+
 
 	scoping		_scoping;
+
+	// Required to gather all info about the structure (@sa StructFields_t)
+	struct TypeContainer {
+		bool		_valid;
+		unsigned _type_offset;
+		std::string _fieldname;
+		int			_offset;
+		FieldsNames_t *_fields;
+	};
 
 #ifdef __linux
 private:
@@ -193,7 +231,8 @@ private:
 		Dwarf_Attribute attr_in, int die_indent_level,
 		const char *tag_name, char **srcfiles, const char **const cfile,
 		Dwarf_Signed cnt, Dwarf_Off parent_offset,
-		Variable *const var = 0, std::string *const basetype = 0) {
+		Variable *const var = 0, std::string *const basetype = 0,
+		TypeContainer ** tcon = 0) {
 
 		const char *v = 0;
 		Dwarf_Error_s *err;
@@ -224,7 +263,36 @@ private:
 		}
 		MY_PRINT("[%s]", form);
 
-		if (SEQ("DW_AT_comp_dir")) {
+		if (SEQ("DW_AT_data_member_location")) {
+			Dwarf_Block *tempb = 0;
+			sres = dwarf_formblock(attr_in, &tempb, &err);
+			if (DW_DLV_OK != sres) { MY_PRINT("failed to read block at attribute"); goto dealloc_form; }
+//			for (unsigned u = 0; u < tempb->bl_len; ++u) {
+//				MY_PRINT("%02x ", *(u + (unsigned char *)tempb->bl_data));
+//			}
+			short offset = 0;
+			short cnt = 0;
+			if (tempb->bl_len >= 3)
+				cnt = *(2 + (unsigned char *)tempb->bl_data);
+			if (tempb->bl_len >= 2)
+				offset = *(1 + (unsigned char *)tempb->bl_data);
+	
+			offset %= 128;
+			offset += cnt * 128;
+
+			MY_PRINT("%d", offset);
+
+			if (!!(*tcon) && (*tcon)->_valid) {
+				(*tcon)->_offset = offset;
+				(*(*tcon)->_fields)[offset] = (*tcon)->_fieldname;
+				MY_PRINT("@FIELD: [%d] off=%d field=%s\n",
+					(*tcon)->_type_offset, offset,
+					(*tcon)->_fieldname.c_str());
+			}
+	
+			dwarf_dealloc(dbg, tempb, DW_DLA_BLOCK);
+
+		} else if (SEQ("DW_AT_comp_dir")) {
 			char *name = 0;
 			sres = dwarf_formstring(attr_in, &name, &err);
 			if (DW_DLV_OK != sres) { MY_PRINT("failed to read string attribute\n"); goto dealloc_form; }
@@ -245,6 +313,9 @@ private:
 			} else if (!!basetype) {
 				*basetype = name;
 			}
+			if (!!(*tcon) && (*tcon)->_valid) {
+				(*tcon)->_fieldname = name;
+			}
 			dwarf_dealloc(dbg, name, DW_DLA_STRING);
 		} else if (SEQ("DW_AT_decl_file") || SEQ("DW_AT_call_file")) {
 			Dwarf_Signed val = 0;
@@ -261,6 +332,12 @@ private:
 				full_path = _path_prefix + full_path;
 			if (!!var)
 				var->setFile(full_path);
+			if (!!(*tcon) && (0 == strcmp(tag_name, "DW_TAG_structure_type") || 0 == strcmp(tag_name, "DW_TAG_class_type")
+				)
+			) {
+				(*tcon)->_fields = &_struct_fields[hasher(full_path + std::to_string((*tcon)->_type_offset))];
+				MY_PRINT("FIELDS_INITED\n");
+			}
 			MY_PRINT("\"%s\" ", *cfile);
 		}
 		else if (SEQ("DW_AT_decl_line")) {
@@ -326,7 +403,7 @@ dealloc_attr:;
 
 	bool print_one_die(Dwarf_Debug dbg, Dwarf_Die die,
 		int die_indent_level, char **srcfiles,
-		const char* *const cfile, Dwarf_Signed cnt) {
+		const char* *const cfile, Dwarf_Signed cnt, TypeContainer ** tcon = 0) {
 
 		Dwarf_Error_s *err;
 		Dwarf_Half tag = 0;
@@ -365,6 +442,7 @@ dealloc_attr:;
 			&& !SEQ1("DW_TAG_typedef")
 			&& !SEQ1("DW_TAG_structure_type")
 			&& !SEQ1("DW_TAG_class_type")
+			&& !SEQ1("DW_TAG_member")
 			)
 			goto dealloc_tag_name;
 
@@ -392,6 +470,19 @@ dealloc_attr:;
 			basetype = &newBaseType(offset, _file);
 		}
 
+		if (0 == strcmp(tagname, "DW_TAG_structure_type") ||
+			0 == strcmp(tagname, "DW_TAG_class_type")) {
+			delete (*tcon);
+			*tcon = new TypeContainer;
+			(*tcon)->_type_offset = offset;
+		}
+		
+		if (!!(*tcon)) {
+			if (0 == strcmp(tagname, "DW_TAG_member"))
+				(*tcon)->_valid = true;
+			else
+				(*tcon)->_valid = false;
+		}
 		MY_PRINT("<0x%08llu>\r\n", offset);
 
 		atres = dwarf_attrlist(die, &atlist, &atcnt, &err);
@@ -410,7 +501,7 @@ dealloc_attr:;
 			MY_PRINT("%*s", 2 * die_indent_level + 1, " ");
 			get_attribute(dbg, die, attr, atlist[i],
 				die_indent_level, tagname,
-				srcfiles, cfile, cnt, offset, var, basetype);
+				srcfiles, cfile, cnt, offset, var, basetype, tcon);
 		}
 		for (Dwarf_Signed i = 0; i < atcnt; ++i)
 			dwarf_dealloc(dbg, atlist[i], DW_DLA_ATTR);
@@ -448,7 +539,7 @@ dealloc_tag_name:
 
 	void print_die_and_children(Dwarf_Debug dbg,
 		Dwarf_Die in_die_in, Dwarf_Bool is_info, char **srcfiles,
-		const char **const cfile, Dwarf_Signed cnt) {
+		const char **const cfile, Dwarf_Signed cnt, TypeContainer **tcon = 0) {
 
 		Dwarf_Die in_die = in_die_in;
 		Dwarf_Error_s *err;
@@ -459,14 +550,14 @@ dealloc_tag_name:
 
 		for (;;) {
 			if (print_one_die(dbg, in_die, _die_stack_indent_level,
-				srcfiles, cfile, cnt)) {
+				srcfiles, cfile, cnt, tcon)) {
 				
 				cdres = dwarf_child(in_die, &child, &err);
 	
 				if (DW_DLV_OK == cdres) {
 					++_die_stack_indent_level;
 					print_die_and_children(dbg, child, is_info,
-						srcfiles, cfile, cnt);
+						srcfiles, cfile, cnt, tcon);
 					--_die_stack_indent_level;
 					dwarf_dealloc(dbg, child, DW_DLA_DIE);
 					child = 0;
@@ -567,7 +658,7 @@ dealloc_tag_name:
 		int nres = 0;
 		int sres = DW_DLV_OK;
 		Dwarf_Die cu_die = 0;
-
+		TypeContainer *tcon = 0;
 		// REF print_die.c : 400	
 		for (;;++iteration) {
 //			MY_PRINT("*\n");
@@ -605,7 +696,7 @@ dealloc_tag_name:
 
 				const char * filename = 0;
 				print_die_and_children(dbg, cu_die, 1, srcfiles,
-					&filename, cnt);
+					&filename, cnt, &tcon);
 				if (DW_DLV_OK == srcf) {
 					for (int si = 0; si < cnt; ++si)
 						dwarf_dealloc(dbg, srcfiles[si], DW_DLA_STRING);
@@ -615,6 +706,7 @@ dealloc_tag_name:
 			dwarf_dealloc(dbg, cu_die, DW_DLA_DIE);
 			cu_die = 0;
 		}
+		delete tcon;
 	};
 
 	int collect_vars_info(Elf * elf) {
@@ -698,6 +790,10 @@ VarInfo::VarInfo() : _imp(new VarInfo::Imp) {}
 
 const std::string VarInfo::type(const std::string& file, const size_t line, const std::string& name) const {
 	return _imp->type(file, line, name);
+}
+
+const std::string VarInfo::fieldname(const std::string& file, const size_t line, const std::string& name, const unsigned offset) const {
+	return _imp->fieldname(file, line, name, offset);
 }
 
 bool VarInfo::init(const std::string& file, const std::string& prefix) {
