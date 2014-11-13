@@ -105,10 +105,12 @@ namespace {
 			static const int max_refs = 256;
 			int i = max_refs;	
 			int next_offset = 0;
+			//printf("TYPING: %d\n", current_offset);
 			std::string suffix;
 			do {
 				std::stringstream ss((*_basetypes)[file()][current_offset]);
 				ss >> next_offset;
+				//printf("TYPING: %d\n", next_offset);
 				if (ss.rdstate() & std::ios::failbit)
 					return (*_basetypes)[file()][current_offset] +
 						suffix;
@@ -119,7 +121,23 @@ namespace {
 			return std::string();
 		}
 		inline size_t type_offset() const { return _type_offset; }
-
+		// Go to chain of types to get to a main type
+		// `typedef struct { int a, int b; } mytype;`
+		const size_t get_top_offset() const {
+			size_t current_offset = _type_offset;
+			static const int max_refs = 256;
+			int i = max_refs;	
+			int next_offset = 0;
+			do {
+				std::stringstream ss((*_basetypes)[file()][current_offset]);
+				ss >> next_offset;
+				if (0 == next_offset)
+					return current_offset;
+				current_offset = next_offset;
+			} while(--i > 0);
+			return _type_offset;
+	
+		}
 	private:
 		SrcFiles_t*		_srcfiles;
 		BaseTypes_t*	_basetypes;
@@ -146,7 +164,9 @@ public:
 		const Variable *const var = get_var(file, line, name);
 		if (!var)
 			return "<Unknown>";
-		int hash = hasher(var->file() + std::to_string(var->type_offset()));
+		int hash = hasher(var->file() + std::to_string(var->get_top_offset()));
+		//printf("REQUIRES: off=%d file=%s\n", var->get_top_offset(),
+		//	var->file().c_str());
 		return _struct_fields[hash][offset];
 	}
 
@@ -335,8 +355,7 @@ private:
 			if (!!(*tcon) && (0 == strcmp(tag_name, "DW_TAG_structure_type") || 0 == strcmp(tag_name, "DW_TAG_class_type")
 				)
 			) {
-				(*tcon)->_fields = &_struct_fields[hasher(full_path + std::to_string((*tcon)->_type_offset))];
-				MY_PRINT("FIELDS_INITED\n");
+			
 			}
 			MY_PRINT("\"%s\" ", *cfile);
 		}
@@ -468,6 +487,8 @@ dealloc_attr:;
 			0 == strcmp(tagname, "DW_TAG_structure_type") ||
 			0 == strcmp(tagname, "DW_TAG_class_type")) {
 			basetype = &newBaseType(offset, _file);
+			//printf("%s ", tagname);
+			//printf("=TYPES: off=%d file=%s\n", offset, _file.c_str());
 		}
 
 		if (0 == strcmp(tagname, "DW_TAG_structure_type") ||
@@ -475,6 +496,9 @@ dealloc_attr:;
 			delete (*tcon);
 			*tcon = new TypeContainer;
 			(*tcon)->_type_offset = offset;
+			(*tcon)->_fields = &_struct_fields[hasher(_file + std::to_string((*tcon)->_type_offset))];
+				//printf("=FIELDS: off=%d file=%s\n", (*tcon)->_type_offset, _file.c_str());
+
 		}
 		
 		if (!!(*tcon)) {

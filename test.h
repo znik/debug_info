@@ -1,3 +1,3 @@
-static inline int infoo(int a) {
-	return a + 1;
-}
+struct big_struct {
+	long int field_1;
+};
