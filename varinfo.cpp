@@ -241,7 +241,6 @@ private:
 	std::map<Dwarf_Addr, Dwarf_Unsigned> _pcaddr2line;
 	std::string _file;
 	std::string _comp_dir;
-	bool _scoping_init;
 
 	int _die_stack_indent_level;	// nesting level of the current DIEs
 	int _vis_start_line;			// line where the current scope starts
@@ -321,11 +320,7 @@ private:
 			*cfile = _file.c_str();	
 			MY_PRINT("\"%s\" ", name);
 			_comp_dir = name;
-			//if (!_scoping_init)
-			{
-				_scoping.init(srclist, _comp_dir + '/');
-				_scoping_init = true;
-			}
+			_scoping.init(srclist, _comp_dir + '/');
 			dwarf_dealloc(dbg, name, DW_DLA_STRING); 
 		} else if (SEQ("DW_AT_name")) {
 			char *name = 0;
@@ -808,7 +803,6 @@ dealloc_tag_name:
 
 bool VarInfo::Imp::init(const std::string& file) {
 #ifdef __linux
-	_scoping_init = false;
 	_file = file;
 	_die_stack_indent_level = 0;
 	return read_file_debug(file.c_str());
