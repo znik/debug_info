@@ -321,7 +321,8 @@ private:
 			*cfile = _file.c_str();	
 			MY_PRINT("\"%s\" ", name);
 			_comp_dir = name;
-			if (!_scoping_init) {
+			//if (!_scoping_init)
+			{
 				_scoping.init(srclist, _comp_dir + '/');
 				_scoping_init = true;
 			}
