@@ -11,8 +11,8 @@ int main(int argc, char *argv[]) {
 	VarInfo vi;
 	std::string prefix =
 		//"";
-		"/cs/systems/home/nzaborov/wiredtiger/build_posix/";
-	if (!vi.init(argv[1], prefix)) {
+		"/cs/systems/home/nzaborov/wt-dev-branch/build_posix/";
+	if (!vi.init(argv[1])) {
 		printf("Failed to initialize VarInfo.\n");
 		return 0;
 	}

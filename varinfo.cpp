@@ -156,7 +156,7 @@ namespace {
 
 class VarInfo::Imp {
 public:
-	bool init(const std::string&, const std::string& = std::string());
+	bool init(const std::string&);
 
 	const std::string fieldname(const std::string &file, const size_t line, const std::string &name,
 		const unsigned offset) const {
@@ -216,7 +216,6 @@ private:
 
 
 private:
-	std::string _path_prefix;
 
 	Vars_t		_vars;
 	SrcFiles_t	_src_files;
@@ -241,6 +240,8 @@ private:
 private:
 	std::map<Dwarf_Addr, Dwarf_Unsigned> _pcaddr2line;
 	std::string _file;
+	std::string _comp_dir;
+	bool _scoping_init;
 
 	int _die_stack_indent_level;	// nesting level of the current DIEs
 	int _vis_start_line;			// line where the current scope starts
@@ -249,7 +250,7 @@ private:
 	void get_attribute(
 		Dwarf_Debug dbg, Dwarf_Die die, Dwarf_Half attr,
 		Dwarf_Attribute attr_in, int die_indent_level,
-		const char *tag_name, char **srcfiles, const char **const cfile,
+		const char *tag_name, char **srcfiles, const std::vector<std::string>& srclist, const char **const cfile,
 		Dwarf_Signed cnt, Dwarf_Off parent_offset,
 		Variable *const var = 0, std::string *const basetype = 0,
 		TypeContainer ** tcon = 0) {
@@ -319,6 +320,11 @@ private:
 			_file = std::string() + name + '/' + _file;
 			*cfile = _file.c_str();	
 			MY_PRINT("\"%s\" ", name);
+			_comp_dir = name;
+			if (!_scoping_init) {
+				_scoping.init(srclist, _comp_dir + '/');
+				_scoping_init = true;
+			}
 			dwarf_dealloc(dbg, name, DW_DLA_STRING); 
 		} else if (SEQ("DW_AT_name")) {
 			char *name = 0;
@@ -348,8 +354,10 @@ private:
 			}
 			*cfile = srcfiles[uval - 1];
 			std::string full_path = *cfile;
-			if ('/' != full_path[0])
-				full_path = _path_prefix + full_path;
+			if ('/' != full_path[0]) {
+				full_path = _comp_dir + '/' + full_path;
+				//printf("%s\n", full_path.c_str());
+			}
 			if (!!var)
 				var->setFile(full_path);
 			if (!!(*tcon) && (0 == strcmp(tag_name, "DW_TAG_structure_type") || 0 == strcmp(tag_name, "DW_TAG_class_type")
@@ -422,7 +430,7 @@ dealloc_attr:;
 
 	bool print_one_die(Dwarf_Debug dbg, Dwarf_Die die,
 		int die_indent_level, char **srcfiles,
-		const char* *const cfile, Dwarf_Signed cnt, TypeContainer ** tcon = 0) {
+		const char* *const cfile, Dwarf_Signed cnt, const std::vector<std::string>& srclist, TypeContainer ** tcon = 0) {
 
 		Dwarf_Error_s *err;
 		Dwarf_Half tag = 0;
@@ -525,7 +533,7 @@ dealloc_attr:;
 			MY_PRINT("%*s", 2 * die_indent_level + 1, " ");
 			get_attribute(dbg, die, attr, atlist[i],
 				die_indent_level, tagname,
-				srcfiles, cfile, cnt, offset, var, basetype, tcon);
+				srcfiles, srclist, cfile, cnt, offset, var, basetype, tcon);
 		}
 		for (Dwarf_Signed i = 0; i < atcnt; ++i)
 			dwarf_dealloc(dbg, atlist[i], DW_DLA_ATTR);
@@ -563,7 +571,7 @@ dealloc_tag_name:
 
 	void print_die_and_children(Dwarf_Debug dbg,
 		Dwarf_Die in_die_in, Dwarf_Bool is_info, char **srcfiles,
-		const char **const cfile, Dwarf_Signed cnt, TypeContainer **tcon = 0) {
+		const char **const cfile, Dwarf_Signed cnt, const std::vector<std::string>& srclist, TypeContainer **tcon = 0) {
 
 		Dwarf_Die in_die = in_die_in;
 		Dwarf_Error_s *err;
@@ -574,14 +582,14 @@ dealloc_tag_name:
 
 		for (;;) {
 			if (print_one_die(dbg, in_die, _die_stack_indent_level,
-				srcfiles, cfile, cnt, tcon)) {
+				srcfiles, cfile, cnt, srclist, tcon)) {
 				
 				cdres = dwarf_child(in_die, &child, &err);
 	
 				if (DW_DLV_OK == cdres) {
 					++_die_stack_indent_level;
 					print_die_and_children(dbg, child, is_info,
-						srcfiles, cfile, cnt, tcon);
+						srcfiles, cfile, cnt, srclist, tcon);
 					--_die_stack_indent_level;
 					dwarf_dealloc(dbg, child, DW_DLA_DIE);
 					child = 0;
@@ -716,11 +724,10 @@ dealloc_tag_name:
 				for (int j = 0; j < cnt; ++j) {
 					srclist.push_back(srcfiles[j]);
 				}
-				_scoping.init(srclist, _path_prefix);
 
 				const char * filename = 0;
 				print_die_and_children(dbg, cu_die, 1, srcfiles,
-					&filename, cnt, &tcon);
+					&filename, cnt, srclist, &tcon);
 				if (DW_DLV_OK == srcf) {
 					for (int si = 0; si < cnt; ++si)
 						dwarf_dealloc(dbg, srcfiles[si], DW_DLA_STRING);
@@ -798,10 +805,10 @@ dealloc_tag_name:
 };
 
 
-bool VarInfo::Imp::init(const std::string& file, const std::string& path_prefix) {
+bool VarInfo::Imp::init(const std::string& file) {
 #ifdef __linux
+	_scoping_init = false;
 	_file = file;
-	_path_prefix = path_prefix;
 	_die_stack_indent_level = 0;
 	return read_file_debug(file.c_str());
 #else // __linux
@@ -820,7 +827,7 @@ const std::string VarInfo::fieldname(const std::string& file, const size_t line,
 	return _imp->fieldname(file, line, name, offset);
 }
 
-bool VarInfo::init(const std::string& file, const std::string& prefix) {
+bool VarInfo::init(const std::string& file) {
 	_file = file;
-	return _imp->init(_file, prefix);
+	return _imp->init(_file);
 }
