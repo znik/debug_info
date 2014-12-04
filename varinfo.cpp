@@ -111,9 +111,13 @@ namespace {
 				std::stringstream ss((*_basetypes)[file()][current_offset]);
 				ss >> next_offset;
 				//printf("TYPING: %d\n", next_offset);
-				if (ss.rdstate() & std::ios::failbit)
-					return (*_basetypes)[file()][current_offset] +
-						suffix;
+				if (ss.rdstate() & std::ios::failbit) {
+					if ((*_basetypes)[file()][current_offset].empty())
+						return "void" + (suffix.empty() ? "*" : suffix);
+					else
+						return (*_basetypes)[file()][current_offset] +
+							suffix;
+				}
 				suffix = (*_basetypesuffix)[file()][current_offset] +
 					suffix;
 				current_offset = next_offset;
