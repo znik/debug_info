@@ -71,6 +71,13 @@ namespace {
 	// SrcFiles describe source files described in .debug_info section.
 	typedef std::map<size_t, std::string> SrcFiles_t;
 
+	// @sa ::validate_member
+	enum {
+			VRES_NOT_ARRAY = -1,
+			VRES_NESTED_STRUCTURE = -2,
+			VRES_UNKNOWN = -3,
+		};
+
 	// Variables describe every variable declared in a program
 	struct Variable {
 		enum {VALUE_NOT_SET = -1};
@@ -135,7 +142,8 @@ namespace {
 			} while(--i > 0);
 			return std::string();
 		}
-		int validate_member(const size_t in_str_offset, const size_t type_offset) const {
+	
+		int validate_member(const size_t in_str_offset, const size_t type_offset, const size_t nearest_field_offset) const {
 			unsigned tsize = 0, tcount = 0;
 
 			size_t current_offset = type_offset;
@@ -155,10 +163,17 @@ namespace {
 					break;;
 				current_offset = next_offset;
 			} while(--i > 0);
+			if (0 == tcount) {
+				if (in_str_offset < nearest_field_offset + tsize)
+					return VRES_NESTED_STRUCTURE;
+				else
+					return VRES_UNKNOWN;
+			}
+
 			if ((in_str_offset < tsize * tcount) &&
 				(in_str_offset % tsize == 0))
 				return in_str_offset / tsize;
-			return -1;
+			return VRES_NOT_ARRAY;
 		}
 
 		inline size_t type_offset() const { return _type_offset; }
@@ -220,13 +235,17 @@ public:
 		}
 		if (str.rend() == i)
 			return "<Unknown>";
-		int idx = var->validate_member(offset, i->second.typeoffset);
-		if (-1 == idx) {
+		int idx = var->validate_member(offset, i->second.typeoffset, i->first);
+		if (VRES_NOT_ARRAY == idx) {
 			if (i->first == offset)
 				return i->second.name;
 			else
 				return "<Unknown>";
 		}
+		else if (VRES_NESTED_STRUCTURE == idx)
+			return i->second.name;
+		else if (VRES_UNKNOWN == idx)
+			return "<Unknown>";
 		return i->second.name + "[" + std::to_string(idx) + "]";
 	}
 
@@ -580,9 +599,10 @@ dealloc_attr:;
 			//printf("=TYPES: off=%d file=%s\n", offset, _file.c_str());
 		}
 
-		if (0 == strcmp(tagname, "DW_TAG_structure_type") ||
+		if (die_indent_level <= 1 && 
+			(0 == strcmp(tagname, "DW_TAG_structure_type") ||
 			0 == strcmp(tagname, "DW_TAG_class_type") ||
-			0 == strcmp(tagname, "DW_TAG_array_type")) {
+			0 == strcmp(tagname, "DW_TAG_array_type"))) {
 			delete (*tcon);
 			*tcon = new TypeContainer;
 			(*tcon)->_type_offset = offset;
